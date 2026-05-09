@@ -1,0 +1,4 @@
+article_code,description,supplier_code,supplier_article_code,current_price,currency
+A1001,Organic flour 1kg,GENERIC,FLOUR-1KG,2.50,EUR
+A1002,Sunflower oil 1L,GENERIC,OIL-SUN-1L,4.20,EUR
+A1003,Tomato can 400g,GENERIC,TOM-400,1.10,EUR

@@ -1,0 +1,396 @@
+from __future__ import annotations
+
+from datetime import datetime
+from io import BytesIO
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
+
+from invoice_price_checker.database import load_product_database
+from invoice_price_checker.odoo_articles import (
+    config_from_env,
+    config_from_mapping,
+    database_status,
+    default_database_path,
+    refresh_articles_database,
+)
+from invoice_price_checker.odoo_update import prepare_odoo_update_rows, update_odoo_prices
+from invoice_price_checker.matching import compare_invoice_to_database
+from invoice_price_checker.models import MatchConfig
+from invoice_price_checker.suppliers import get_parser, list_suppliers, supplier_label
+
+
+st.set_page_config(page_title="Invoice Price Checker", layout="wide")
+
+
+def _download_csv(df: pd.DataFrame) -> bytes:
+    return df.to_csv(index=False).encode("utf-8")
+
+
+def _download_excel(df: pd.DataFrame, sheet_name: str = "price_changes") -> bytes:
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
+        _format_workbook(writer)
+    return buffer.getvalue()
+
+
+def _download_workbook(sheets: dict[str, pd.DataFrame]) -> bytes:
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        _calculation_notes().to_excel(writer, index=False, sheet_name="calculation_notes")
+        for name, sheet in sheets.items():
+            sheet.to_excel(writer, index=False, sheet_name=name[:31])
+        _format_workbook(writer)
+    return buffer.getvalue()
+
+
+def _calculation_notes() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"column": "Article_ID_Fournisseur", "calculation": "Supplier article reference used as the primary matching key."},
+            {"column": "Article_Ref_EAN", "calculation": "Article reference from the database."},
+            {"column": "ID_Fournisseur", "calculation": "Supplier ID from the database."},
+            {"column": "Fact_Designation", "calculation": "Product designation read from the invoice."},
+            {"column": "Fact_PU_Net", "calculation": "Net supplier unit price read from the invoice before fuel surcharge."},
+            {"column": "Fact_PU_Net_GZ", "calculation": "Fact_PU_Net * (1 + GAZOLE / 100). Equal to Fact_PU_Net when there is no GAZOLE surcharge."},
+            {"column": "Fact_PU_unitaire", "calculation": "Fact_PU_Net_GZ * DB_Fournisseur_Unit_Ratio. This is the invoice price converted to the database unit."},
+            {"column": "DB_Prix_Net", "calculation": "Current net purchase price from the database."},
+            {"column": "Ecart_Prix", "calculation": "Fact_PU_unitaire - DB_Prix_Net."},
+            {"column": "Ecart_Prix_percent", "calculation": "Ecart_Prix / DB_Prix_Net."},
+            {"column": "prix_de_vente", "calculation": "Fact_PU_unitaire * (1 + margin_rate / 100) * (1 + TVA / 100), plus consigne when applicable."},
+            {"column": "PU_Modif", "calculation": "TRUE when Ecart_Prix < borne_inf or Ecart_Prix > borne_sup, unless the modification is blocked."},
+            {"column": "remise_temp", "calculation": "Generic temporary-discount flag. For RELAIS VERT: 1 when Q*, P, or E is non-zero; G is not included."},
+            {"column": "Blocage_Modif", "calculation": "TRUE when a price decrease is blocked because remise_temp = 1."},
+            {"column": "Ecart_Prix_Anormal", "calculation": "TRUE when abs(Ecart_Prix_percent) > abnormal_ratio and the price is changed."},
+            {"column": "Raison_du_Blocage", "calculation": "Reason explaining why a modification was blocked, when applicable."},
+            {"column": "DB_Fournisseur_Unit_Ratio", "calculation": "Conversion ratio from the supplier invoice unit to the database article unit."},
+            {"column": "Detail_Remise", "calculation": "Human-readable source of remise_temp, for example Q*=12 or E=4."},
+            {"column": "TVA", "calculation": "Sales tax rate from the database, used to compute prix_de_vente."},
+            {"column": "Taux_de_Marque", "calculation": "Margin category from the database, used to compute prix_de_vente."},
+            {"column": "Monnaie", "calculation": "Invoice or database currency."},
+            {"column": "Match_Fact_DB", "calculation": "TRUE when the invoice line was matched to a database article."},
+            {"column": "Match_Methode", "calculation": "Matching method used, for example supplier article code or description fallback."},
+            {"column": "ID_externe", "calculation": "Odoo external ID from the database, kept at the end because it is mainly used for technical checks."},
+            {"column": "DB_Designation", "calculation": "Product designation from the database, kept at the end for traceability."},
+            {"column": "Coût / Fournisseurs/Prix", "calculation": "For Odoo update review: Coût = Fact_PU_unitaire; Fournisseurs/Prix = Fact_PU_Net_GZ."},
+        ]
+    )
+
+
+def _format_workbook(writer: pd.ExcelWriter) -> None:
+    numeric_formats = {
+        "DB_Prix_Net": "0.000",
+        "Fact_PU_Net": "0.000",
+        "Fact_PU_Net_GZ": "0.000",
+        "DB_Fournisseur_Unit_Ratio": "0.000000000000",
+        "Fact_PU_unitaire": "0.000",
+        "Ecart_Prix": "0.000",
+        "Ecart_Prix_percent": "0.000%",
+        "TVA": "0.000",
+        "prix_de_vente": "0.00",
+        "Coût": "0.000",
+        "Fournisseurs/Prix": "0.000",
+        "Prix de vente": "0.00",
+    }
+    for ws in writer.book.worksheets:
+        ws.freeze_panes = "A2"
+        headers = [cell.value for cell in ws[1]]
+        for idx, header in enumerate(headers, start=1):
+            if header in numeric_formats:
+                for column_cell in ws.iter_cols(min_col=idx, max_col=idx, min_row=2):
+                    for cell in column_cell:
+                        cell.number_format = numeric_formats[header]
+            width = max(12, min(42, len(str(header or "")) + 2))
+            ws.column_dimensions[ws.cell(row=1, column=idx).column_letter].width = width
+
+
+st.title("Invoice Price Checker")
+
+
+
+
+def _invoice_stem(uploaded_file) -> str:
+    name = getattr(uploaded_file, "name", "invoice") or "invoice"
+    return Path(name).stem or "invoice"
+
+def _format_timestamp(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return datetime.fromtimestamp(value).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _odoo_config_from_streamlit():
+    if "odoo" in st.secrets:
+        return config_from_mapping(st.secrets["odoo"])
+    return config_from_env()
+
+
+def _render_odoo_update_controls(odoo_update_rows: pd.DataFrame, invoice_stem: str) -> None:
+    st.subheader("Automatic Odoo update")
+    if odoo_update_rows.empty:
+        st.info("Price changes were found, but no rows are eligible for automatic Odoo update.")
+        return
+
+    st.warning(
+        f"{len(odoo_update_rows)} changed-price row(s) are eligible for Odoo update. "
+        "Review the workbook or the Odoo update tab before applying changes."
+    )
+    confirmation = st.checkbox(
+        "I have reviewed the rows above and I want to update Odoo prices",
+        key=f"confirm_odoo_update_{invoice_stem}",
+    )
+    if st.button("Update Odoo prices", disabled=not confirmation, key=f"update_odoo_prices_{invoice_stem}"):
+        try:
+            with st.spinner("Updating Odoo prices..."):
+                summary = update_odoo_prices(odoo_update_rows, _odoo_config_from_streamlit())
+            st.success(
+                f"Update finished: {summary.success} success, "
+                f"{summary.warnings} warning, {summary.errors} error."
+            )
+            st.dataframe(summary.results, use_container_width=True, hide_index=True)
+            st.download_button(
+                "Download Odoo update report CSV",
+                data=_download_csv(summary.results),
+                file_name="odoo_price_update_report.csv",
+                mime="text/csv",
+                key=f"download_odoo_update_report_{invoice_stem}",
+            )
+        except Exception as exc:
+            st.error(f"Could not update Odoo prices: {exc}")
+
+
+with st.sidebar:
+    st.header("Inputs")
+    supplier_id = st.selectbox("Supplier parser", list_suppliers(), format_func=supplier_label)
+
+    st.subheader("Product database")
+    data_path = default_database_path()
+    status = database_status(data_path)
+    if status["exists"]:
+        st.caption(f"Default database: `{data_path.name}`")
+        st.caption(f"Created: {_format_timestamp(status['created_at'])}")
+        st.caption(f"Modified: {_format_timestamp(status['modified_at'])}")
+    else:
+        st.warning("Default database is missing. Refresh from Odoo before running checks, or upload a database manually.")
+
+    database_source = st.radio(
+        "Database source",
+        ["Default local database", "Manual upload"],
+        disabled=not status["exists"],
+    )
+    refresh_database = st.button("Refresh database from Odoo")
+    if refresh_database:
+        try:
+            with st.spinner("Refreshing article database from Odoo..."):
+                refreshed = refresh_articles_database(_odoo_config_from_streamlit(), data_path)
+            st.success(f"Database refreshed: {len(refreshed)} rows")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Could not refresh database from Odoo: {exc}")
+
+    database_file = None
+    if database_source == "Manual upload" or not status["exists"]:
+        database_file = st.file_uploader("Product database", type=["csv", "xlsx", "xls", "data"])
+    invoice_file = st.file_uploader("Supplier invoice PDF", type=["pdf"])
+
+    st.header("Matching")
+    borne_inf = st.number_input(
+        "Lower price-change limit",
+        value=-0.10,
+        step=0.01,
+        format="%.2f",
+        help="A price decrease is treated as changed only below this value.",
+    )
+    borne_sup = st.number_input(
+        "Upper price-change limit",
+        value=0.05,
+        step=0.01,
+        format="%.2f",
+        help="A price increase is treated as changed only above this value.",
+    )
+    abnormal_ratio = st.number_input(
+        "Abnormal ratio",
+        min_value=0.0,
+        value=0.30,
+        step=0.05,
+        format="%.2f",
+        help="Rows above this absolute price-change ratio are isolated for manual review.",
+    )
+    allow_description_fallback = st.checkbox(
+        "Allow description fallback",
+        value=True,
+        help="Use normalized descriptions when supplier article references do not match.",
+    )
+
+
+if not invoice_file:
+    st.info("Upload a supplier PDF invoice to begin.")
+    st.stop()
+
+try:
+    if database_source == "Default local database" and status["exists"]:
+        with data_path.open("rb") as handle:
+            products = load_product_database(handle)
+    elif database_file:
+        products = load_product_database(database_file)
+    else:
+        st.info("Choose a database source before running the check.")
+        st.stop()
+except Exception as exc:
+    st.error(f"Could not read product database: {exc}")
+    st.stop()
+
+parser = get_parser(supplier_id)
+
+try:
+    invoice = parser.parse(invoice_file)
+except Exception as exc:
+    st.error(f"Could not parse invoice with parser '{supplier_id}': {exc}")
+    st.stop()
+
+config = MatchConfig(
+    supplier_code=parser.supplier_code,
+    borne_inf=borne_inf,
+    borne_sup=borne_sup,
+    abnormal_ratio=abnormal_ratio,
+    allow_description_fallback=allow_description_fallback,
+)
+result = compare_invoice_to_database(products, invoice.lines, config)
+invoice_stem = _invoice_stem(invoice_file)
+
+summary_cols = st.columns(4)
+summary_cols[0].metric("Invoice lines", len(invoice.lines))
+summary_cols[1].metric("Matched", int(result["Match_Fact_DB"].sum()))
+summary_cols[2].metric("Price changes", int(result["PU_Modif"].sum()))
+summary_cols[3].metric("Unmatched", int((~result["Match_Fact_DB"]).sum()))
+
+st.subheader("Invoice Metadata")
+metadata_df = pd.DataFrame(
+    [{"field": key, "value": value} for key, value in invoice.metadata.items()]
+)
+st.dataframe(metadata_df, use_container_width=True, hide_index=True)
+
+changed = result[result["PU_Modif"]].copy()
+unmatched = result[~result["Match_Fact_DB"]].copy()
+abnormal = result[result["Ecart_Prix_Anormal"]].copy()
+blocked = result[result["Blocage_Modif"]].copy()
+odoo_update_rows = prepare_odoo_update_rows(changed)
+workbook_sheets = {
+    "price_changes": changed,
+    "odoo_update_review": odoo_update_rows,
+    "unmatched": unmatched,
+    "abnormal_changes": abnormal,
+    "blocked_decreases": blocked,
+    "all_checked": result,
+}
+
+st.download_button(
+    "Download complete review workbook",
+    data=_download_workbook(workbook_sheets),
+    file_name=f"{invoice_stem}_price_review.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
+
+tab_all, tab_changed, tab_update, tab_unmatched, tab_abnormal, tab_blocked = st.tabs(
+    [
+        "All invoice lines",
+        "Changed prices",
+        "Odoo update",
+        "Unmatched",
+        "Abnormal",
+        "Blocked decreases",
+    ]
+)
+
+with tab_all:
+    st.dataframe(result, use_container_width=True, hide_index=True)
+
+with tab_changed:
+    if changed.empty:
+        st.success("No price changes found.")
+    else:
+        st.dataframe(changed, use_container_width=True, hide_index=True)
+        col_csv, col_xlsx = st.columns(2)
+        col_csv.download_button(
+            "Download changed prices CSV",
+            data=_download_csv(changed),
+            file_name="price_changes.csv",
+            mime="text/csv",
+        )
+        col_xlsx.download_button(
+            "Download changed prices Excel",
+            data=_download_excel(changed, "price_changes"),
+            file_name="price_changes.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+
+with tab_update:
+    st.subheader("Odoo update review")
+    if odoo_update_rows.empty:
+        st.info("No eligible changed-price rows to update in Odoo.")
+    else:
+        st.warning("Review these rows carefully before updating Odoo. Only eligible changed prices are listed here.")
+        st.dataframe(odoo_update_rows, use_container_width=True, hide_index=True)
+        col_csv, col_xlsx = st.columns(2)
+        col_csv.download_button(
+            "Download Odoo update CSV",
+            data=_download_csv(odoo_update_rows),
+            file_name="odoo_price_update_review.csv",
+            mime="text/csv",
+        )
+        col_xlsx.download_button(
+            "Download Odoo update Excel",
+            data=_download_excel(odoo_update_rows, "odoo_update_review"),
+            file_name="odoo_price_update_review.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+with tab_unmatched:
+    if unmatched.empty:
+        st.success("All invoice lines matched a database article.")
+    else:
+        st.warning("Review unmatched lines before uploading price changes.")
+        st.dataframe(unmatched, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download unmatched CSV",
+            data=_download_csv(unmatched),
+            file_name="unmatched_invoice_lines.csv",
+            mime="text/csv",
+        )
+
+with tab_abnormal:
+    if abnormal.empty:
+        st.success("No abnormal price changes found.")
+    else:
+        st.warning("These rows exceed the abnormal ratio and should be reviewed manually.")
+        st.dataframe(abnormal, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download abnormal changes CSV",
+            data=_download_csv(abnormal),
+            file_name="abnormal_price_changes.csv",
+            mime="text/csv",
+        )
+
+with tab_blocked:
+    if blocked.empty:
+        st.success("No RELAIS VERT decreases were blocked by Q*, P, or E discount columns.")
+    else:
+        st.warning("These decreases are not applied because Q*, P, or E is non-zero.")
+        st.dataframe(blocked, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download blocked decreases CSV",
+            data=_download_csv(blocked),
+            file_name="blocked_decreases.csv",
+            mime="text/csv",
+        )
+
+if not changed.empty:
+    st.divider()
+    _render_odoo_update_controls(odoo_update_rows, invoice_stem)
+
+st.caption(
+    "Database upload is intentionally staged: review and download the changed-price file before applying updates."
+)
