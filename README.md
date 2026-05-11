@@ -17,7 +17,7 @@ L application permet de :
 - preparer les lignes qui peuvent etre envoyees vers Odoo ;
 - mettre a jour Odoo seulement apres validation explicite par l utilisateur.
 
-Pour le moment, les fournisseurs implementes sont RELAIS VERT, HALLE BIO OCCITANIE, EKIBIO, AGIDRA et EPICE.
+Pour le moment, les fournisseurs implementes sont RELAIS VERT, HALLE BIO OCCITANIE, EKIBIO, AGIDRA, EPICE et DDS.
 
 ## 2. Pre-requis
 
@@ -212,6 +212,7 @@ Pour RELAIS VERT et HALLE BIO OCCITANIE :
 - EKIBIO utilise l ID fournisseur `358` ;
 - AGIDRA utilise l ID fournisseur `329` ;
 - EPICE utilise l ID fournisseur `262` ;
+- DDS utilise l ID fournisseur `2784` ;
 - la ligne `GAZOLE` est traitee comme une surcharge en pourcentage ;
 - cette surcharge est appliquee aux prix facture avant comparaison ;
 - les produits de categorie `Fruits & Legumes` sont exclus de la base avant matching ;

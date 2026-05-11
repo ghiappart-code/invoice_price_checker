@@ -84,8 +84,22 @@ def compare_invoice_to_database(
     result = pd.DataFrame(rows)
     if result.empty:
         return pd.DataFrame(columns=OUTPUT_COLUMNS)
+    result = _flag_duplicate_invoice_lines(result)
     result = result[INTERNAL_OUTPUT_COLUMNS].rename(columns=OUTPUT_COLUMN_RENAMES)
     return _round_output_numbers(result)
+
+
+def _flag_duplicate_invoice_lines(result: pd.DataFrame) -> pd.DataFrame:
+    flagged = result.copy()
+    duplicate_mask = flagged.duplicated(subset=["supplier_article_code"], keep="first")
+    if not duplicate_mask.any():
+        return flagged
+
+    flagged.loc[duplicate_mask, "price_changed"] = False
+    flagged.loc[duplicate_mask, "abnormal_change"] = True
+    flagged.loc[duplicate_mask, "change_blocked"] = True
+    flagged.loc[duplicate_mask, "block_reason"] = "ligne_dupliquee_facture"
+    return flagged
 
 
 def _round_output_numbers(result: pd.DataFrame) -> pd.DataFrame:
@@ -194,7 +208,7 @@ def _match_line(
         "price_changed": price_changed,
         "abnormal_change": abnormal_change,
         "change_blocked": change_blocked,
-        "block_reason": "decrease_with_q_p_or_e_discount" if change_blocked else None,
+        "block_reason": _block_reason(change_blocked, abnormal_change, config),
     }
 
 
@@ -272,3 +286,11 @@ def _remise_detail(q_discount: float, p_discount: float, e_discount: float) -> s
     if e_discount:
         parts.append(f"E={e_discount:g}")
     return ", ".join(parts)
+
+
+def _block_reason(change_blocked: bool, abnormal_change: bool, config: MatchConfig) -> str | None:
+    if change_blocked:
+        return "remise_non_appliquee"
+    if abnormal_change:
+        return f"ecart de prix > {config.abnormal_ratio:.0%}"
+    return None

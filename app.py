@@ -18,7 +18,8 @@ from invoice_price_checker.odoo_articles import (
 from invoice_price_checker.odoo_update import prepare_odoo_update_rows, update_odoo_prices
 from invoice_price_checker.matching import compare_invoice_to_database
 from invoice_price_checker.models import MatchConfig
-from invoice_price_checker.suppliers import get_parser, list_suppliers, supplier_label
+from invoice_price_checker.suppliers import detect_supplier_from_text, get_parser, list_suppliers, supplier_label
+from invoice_price_checker.text import extract_pdf_text
 
 
 st.set_page_config(page_title="Invoice Price Checker", layout="wide")
@@ -63,8 +64,8 @@ def _calculation_notes() -> pd.DataFrame:
             {"column": "PU_Modif", "calculation": "TRUE when Ecart_Prix < borne_inf or Ecart_Prix > borne_sup, unless the modification is blocked."},
             {"column": "remise_temp", "calculation": "Generic temporary-discount flag. For RELAIS VERT: 1 when Q*, P, or E is non-zero; G is not included."},
             {"column": "Blocage_Modif", "calculation": "TRUE when a price decrease is blocked because remise_temp = 1."},
-            {"column": "Ecart_Prix_Anormal", "calculation": "TRUE when abs(Ecart_Prix_percent) > abnormal_ratio and the price is changed."},
-            {"column": "Raison_du_Blocage", "calculation": "Reason explaining why a modification was blocked, when applicable."},
+            {"column": "Ecart_Prix_Anormal", "calculation": "TRUE when abs(Ecart_Prix_percent) > abnormal_ratio and the price is changed, or when an invoice line must be reviewed manually, for example a duplicate supplier reference."},
+            {"column": "Raison_du_Blocage", "calculation": "Reason explaining why a modification was blocked or requires manual review, when applicable. ligne_dupliquee_facture means the same supplier reference appears more than once on the invoice; only the first occurrence is used for automatic update. remise_non_appliquee means a price decrease was blocked because a temporary discount is present. ecart de prix > xx% means the price change exceeds the abnormal ratio."},
             {"column": "DB_Fournisseur_Unit_Ratio", "calculation": "Conversion ratio from the supplier invoice unit to the database article unit."},
             {"column": "Detail_Remise", "calculation": "Human-readable source of remise_temp, for example Q*=12 or E=4."},
             {"column": "TVA", "calculation": "Sales tax rate from the database, used to compute prix_de_vente."},
@@ -127,6 +128,31 @@ def _odoo_config_from_streamlit():
     return config_from_env()
 
 
+def _validate_invoice_supplier(uploaded_file, selected_supplier_id: str) -> None:
+    try:
+        text = extract_pdf_text(uploaded_file)
+    except Exception as exc:
+        st.error(f"Impossible de lire le texte de la facture PDF: {exc}")
+        st.stop()
+    finally:
+        uploaded_file.seek(0)
+
+    detected_supplier_id = detect_supplier_from_text(text)
+    if detected_supplier_id is None:
+        st.error(
+            "Fournisseur non reconnu. Cette facture ne correspond a aucun fournisseur "
+            "actuellement pris en charge."
+        )
+        st.stop()
+
+    if detected_supplier_id != selected_supplier_id:
+        st.error(
+            "Le fournisseur selectionne ne correspond pas a la facture. "
+            f"Cette facture semble correspondre a {supplier_label(detected_supplier_id)}."
+        )
+        st.stop()
+
+
 def _render_odoo_update_controls(odoo_update_rows: pd.DataFrame, invoice_stem: str) -> None:
     st.subheader("Automatic Odoo update")
     if odoo_update_rows.empty:
@@ -163,7 +189,11 @@ def _render_odoo_update_controls(odoo_update_rows: pd.DataFrame, invoice_stem: s
 
 with st.sidebar:
     st.header("Inputs")
-    supplier_id = st.selectbox("Supplier parser", list_suppliers(), format_func=supplier_label)
+    supplier_id = st.selectbox(
+        "Fournisseur de la facture",
+        list_suppliers(include_generic=False),
+        format_func=supplier_label,
+    )
 
     st.subheader("Product database")
     data_path = default_database_path()
@@ -224,10 +254,25 @@ with st.sidebar:
         help="Use normalized descriptions when supplier article references do not match.",
     )
 
+    analysis_disabled = not invoice_file or (
+        (database_source == "Manual upload" or not status["exists"]) and database_file is None
+    )
+    launch_analysis = st.button(
+        "Lancer l'analyse",
+        type="primary",
+        disabled=analysis_disabled,
+    )
+
 
 if not invoice_file:
     st.info("Upload a supplier PDF invoice to begin.")
     st.stop()
+
+if not launch_analysis:
+    st.info("Choisissez la facture, la base articles et le fournisseur, puis cliquez sur Lancer l'analyse.")
+    st.stop()
+
+_validate_invoice_supplier(invoice_file, supplier_id)
 
 try:
     if database_source == "Default local database" and status["exists"]:
@@ -282,7 +327,7 @@ workbook_sheets = {
     "odoo_update_review": odoo_update_rows,
     "unmatched": unmatched,
     "abnormal_changes": abnormal,
-    "blocked_decreases": blocked,
+    "blocked_or_manual_review": blocked,
     "all_checked": result,
 }
 
@@ -300,7 +345,7 @@ tab_all, tab_changed, tab_update, tab_unmatched, tab_abnormal, tab_blocked = st.
         "Odoo update",
         "Unmatched",
         "Abnormal",
-        "Blocked decreases",
+        "Blocked / manual review",
     ]
 )
 
@@ -363,9 +408,12 @@ with tab_unmatched:
 
 with tab_abnormal:
     if abnormal.empty:
-        st.success("No abnormal price changes found.")
+        st.success("No abnormal price changes or manually flagged rows found.")
     else:
-        st.warning("These rows exceed the abnormal ratio and should be reviewed manually.")
+        st.warning(
+            f"Ces articles notes ont change de plus de {abnormal_ratio:.0%} en prix "
+            "ou bien ont d'autres problemes notes dans Raison_du_Blocage."
+        )
         st.dataframe(abnormal, use_container_width=True, hide_index=True)
         st.download_button(
             "Download abnormal changes CSV",
@@ -376,14 +424,14 @@ with tab_abnormal:
 
 with tab_blocked:
     if blocked.empty:
-        st.success("No RELAIS VERT decreases were blocked by Q*, P, or E discount columns.")
+        st.success("No blocked or manually flagged rows found.")
     else:
-        st.warning("These decreases are not applied because Q*, P, or E is non-zero.")
+        st.warning("These rows are not applied automatically. Check Raison_du_Blocage before updating Odoo.")
         st.dataframe(blocked, use_container_width=True, hide_index=True)
         st.download_button(
-            "Download blocked decreases CSV",
+            "Download blocked/manual review CSV",
             data=_download_csv(blocked),
-            file_name="blocked_decreases.csv",
+            file_name="blocked_or_manual_review.csv",
             mime="text/csv",
         )
 
