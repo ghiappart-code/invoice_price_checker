@@ -104,10 +104,20 @@ def _flag_duplicate_invoice_lines(result: pd.DataFrame) -> pd.DataFrame:
 
 def _round_output_numbers(result: pd.DataFrame) -> pd.DataFrame:
     rounded = result.copy()
-    for column in ["Ecart_Prix", "Ecart_Prix_percent"]:
-        if column in rounded:
-            rounded[column] = pd.to_numeric(rounded[column], errors="coerce").round(3)
+    if "Ecart_Prix" in rounded:
+        rounded["Ecart_Prix"] = pd.to_numeric(rounded["Ecart_Prix"], errors="coerce").round(3)
+    if "Ecart_Prix_percent" in rounded:
+        rounded["Ecart_Prix_percent"] = (
+            pd.to_numeric(rounded["Ecart_Prix_percent"], errors="coerce")
+            .map(_format_percent)
+        )
     return rounded
+
+
+def _format_percent(value: float) -> str | None:
+    if pd.isna(value):
+        return None
+    return f"{value:.1%}"
 
 
 def _prepare_invoice_lines(invoice_lines: pd.DataFrame) -> pd.DataFrame:

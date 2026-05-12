@@ -40,6 +40,7 @@ def test_compare_detects_changed_price():
     assert bool(result.loc[0, "Match_Fact_DB"]) is True
     assert bool(result.loc[0, "PU_Modif"]) is True
     assert result.loc[0, "Ecart_Prix"] == 0.25
+    assert result.loc[0, "Ecart_Prix_percent"] == "10.0%"
 
 def test_duplicate_invoice_reference_is_flagged_after_first_occurrence():
     products = normalize_product_database(

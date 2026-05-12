@@ -29,8 +29,10 @@ _DETECTION_KEYWORDS: dict[str, tuple[str, ...]] = {
     EkibioParser.supplier_code: ("ekibio",),
     EpiceParser.supplier_code: ("epice",),
     HalleBioOccitanieParser.supplier_code: ("halle bio occitanie", "halle bio"),
-    RelaisVertParser.supplier_code: ("relais vert",),
+    RelaisVertParser.supplier_code: ("relais-vert.com", "relais vert"),
 }
+
+_SUPPLIER_DETECTION_HEADER_CHARS = 1200
 
 
 def list_suppliers(include_generic: bool = True) -> list[str]:
@@ -55,7 +57,7 @@ def get_parser(supplier_code: str) -> SupplierInvoiceParser:
 
 
 def detect_supplier_from_text(text: str) -> str | None:
-    text_key = _supplier_detection_key(text)
+    text_key = _supplier_detection_key(text[:_SUPPLIER_DETECTION_HEADER_CHARS])
     for supplier_code, keywords in _DETECTION_KEYWORDS.items():
         if any(_has_supplier_keyword(text_key, keyword) for keyword in keywords):
             return supplier_code

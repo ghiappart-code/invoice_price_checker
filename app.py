@@ -116,6 +116,49 @@ def _invoice_stem(uploaded_file) -> str:
     name = getattr(uploaded_file, "name", "invoice") or "invoice"
     return Path(name).stem or "invoice"
 
+
+def _uploaded_file_signature(uploaded_file) -> tuple[str, int] | None:
+    if uploaded_file is None:
+        return None
+    return (
+        getattr(uploaded_file, "name", "") or "",
+        int(getattr(uploaded_file, "size", 0) or 0),
+    )
+
+
+def _analysis_signature(
+    invoice_file,
+    database_file,
+    supplier_id: str,
+    database_source: str,
+    data_path: Path,
+    status: dict[str, object],
+    borne_inf: float,
+    borne_sup: float,
+    abnormal_ratio: float,
+    allow_description_fallback: bool,
+) -> tuple[object, ...]:
+    database_signature: object
+    if database_source == "Manual upload" or not status["exists"]:
+        database_signature = ("upload", _uploaded_file_signature(database_file))
+    else:
+        database_signature = (
+            "default",
+            str(data_path),
+            status.get("modified_at"),
+        )
+
+    return (
+        _uploaded_file_signature(invoice_file),
+        database_signature,
+        supplier_id,
+        float(borne_inf),
+        float(borne_sup),
+        float(abnormal_ratio),
+        bool(allow_description_fallback),
+    )
+
+
 def _format_timestamp(value: float | None) -> str:
     if value is None:
         return "n/a"
@@ -163,6 +206,7 @@ def _render_odoo_update_controls(odoo_update_rows: pd.DataFrame, invoice_stem: s
         f"{len(odoo_update_rows)} changed-price row(s) are eligible for Odoo update. "
         "Review the workbook or the Odoo update tab before applying changes."
     )
+    update_report_displayed = False
     confirmation = st.checkbox(
         "I have reviewed the rows above and I want to update Odoo prices",
         key=f"confirm_odoo_update_{invoice_stem}",
@@ -171,6 +215,7 @@ def _render_odoo_update_controls(odoo_update_rows: pd.DataFrame, invoice_stem: s
         try:
             with st.spinner("Updating Odoo prices..."):
                 summary = update_odoo_prices(odoo_update_rows, _odoo_config_from_streamlit())
+            st.session_state["odoo_update_summary"] = summary
             st.success(
                 f"Update finished: {summary.success} success, "
                 f"{summary.warnings} warning, {summary.errors} error."
@@ -183,8 +228,24 @@ def _render_odoo_update_controls(odoo_update_rows: pd.DataFrame, invoice_stem: s
                 mime="text/csv",
                 key=f"download_odoo_update_report_{invoice_stem}",
             )
+            update_report_displayed = True
         except Exception as exc:
             st.error(f"Could not update Odoo prices: {exc}")
+
+    stored_summary = st.session_state.get("odoo_update_summary")
+    if stored_summary is not None and not update_report_displayed:
+        st.info(
+            f"Last Odoo update report: {stored_summary.success} success, "
+            f"{stored_summary.warnings} warning, {stored_summary.errors} error."
+        )
+        st.dataframe(stored_summary.results, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download last Odoo update report CSV",
+            data=_download_csv(stored_summary.results),
+            file_name="odoo_price_update_report.csv",
+            mime="text/csv",
+            key=f"download_last_odoo_update_report_{invoice_stem}",
+        )
 
 
 with st.sidebar:
@@ -257,18 +318,38 @@ with st.sidebar:
     analysis_disabled = not invoice_file or (
         (database_source == "Manual upload" or not status["exists"]) and database_file is None
     )
+    current_analysis_signature = _analysis_signature(
+        invoice_file,
+        database_file,
+        supplier_id,
+        database_source,
+        data_path,
+        status,
+        borne_inf,
+        borne_sup,
+        abnormal_ratio,
+        allow_description_fallback,
+    )
+    if st.session_state.get("analysis_signature") != current_analysis_signature:
+        st.session_state["analysis_started"] = False
+        st.session_state["analysis_signature"] = current_analysis_signature
+        st.session_state.pop("odoo_update_summary", None)
+
     launch_analysis = st.button(
         "Lancer l'analyse",
         type="primary",
         disabled=analysis_disabled,
     )
+    if launch_analysis:
+        st.session_state["analysis_started"] = True
+        st.session_state.pop("odoo_update_summary", None)
 
 
 if not invoice_file:
     st.info("Upload a supplier PDF invoice to begin.")
     st.stop()
 
-if not launch_analysis:
+if not st.session_state.get("analysis_started", False):
     st.info("Choisissez la facture, la base articles et le fournisseur, puis cliquez sur Lancer l'analyse.")
     st.stop()
 

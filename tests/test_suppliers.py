@@ -15,5 +15,16 @@ def test_detect_supplier_from_text_does_not_match_product_word_fragment():
     assert detect_supplier_from_text("Facture ACME - lot de melanges d'epices") is None
 
 
+def test_detect_supplier_from_text_only_uses_header():
+    text = (
+        "FACTURE\n"
+        "www.relais-vert.com\n"
+        + ("ligne de detail produit\n" * 80)
+        + "CHORIZO EPICE EN U OU SARTA\n"
+    )
+
+    assert detect_supplier_from_text(text) == "254"
+
+
 def test_app_supplier_list_excludes_generic_parser_when_requested():
     assert "GENERIC" not in list_suppliers(include_generic=False)
