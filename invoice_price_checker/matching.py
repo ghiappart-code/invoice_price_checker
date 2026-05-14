@@ -151,6 +151,10 @@ def _match_line(
             match = supplier_products[supplier_products["supplier_article_key"] == stripped_key]
             match_method = "supplier_article_code_without_leading_zeroes"
 
+    if match.empty and str(config.supplier_code) == "262":
+        match = _match_epice_truncated_reference(line, supplier_products)
+        match_method = "epice_supplier_article_code_without_last_two_chars"
+
     if match.empty and config.allow_description_fallback:
         match = supplier_products[
             supplier_products["description_key"] == line["description_key"]
@@ -276,6 +280,18 @@ def _strip_numeric_leading_zero_key(value: object) -> str:
     if not text.isdigit():
         return ""
     return text.lstrip("0") or "0"
+
+
+def _match_epice_truncated_reference(line: pd.Series, supplier_products: pd.DataFrame) -> pd.DataFrame:
+    invoice_key = line["supplier_article_key"]
+    if not invoice_key:
+        return supplier_products.iloc[0:0]
+
+    truncated_keys = supplier_products["supplier_article_key"].astype(str).str[:-2]
+    candidates = supplier_products[truncated_keys == invoice_key]
+    if len(candidates) == 1:
+        return candidates
+    return supplier_products.iloc[0:0]
 
 
 def _numeric_or_zero(value: object) -> float:

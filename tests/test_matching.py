@@ -121,3 +121,83 @@ def test_abnormal_price_change_has_readable_block_reason():
 
     assert bool(result.loc[0, "Ecart_Prix_Anormal"]) is True
     assert result.loc[0, "Raison_du_Blocage"] == "ecart de prix > 30%"
+
+
+def test_epice_matches_database_reference_with_extra_two_character_suffix():
+    products = normalize_product_database(
+        pd.DataFrame(
+            [
+                {
+                    "article_code": "A1001",
+                    "description": "Biscuits Caramel Sel Guerande VRAC",
+                    "supplier_code": "262",
+                    "supplier_article_code": "BCSDAOVRAC",
+                    "current_price": 43.35,
+                    "currency": "EUR",
+                }
+            ]
+        )
+    )
+    invoice = pd.DataFrame(
+        [
+            {
+                "supplier_article_code": "BCSDAOVR",
+                "description": "Biscuits Caramel Sel Guerande VRAC",
+                "unit_price": 43.35,
+                "currency": "EUR",
+            }
+        ]
+    )
+
+    result = compare_invoice_to_database(
+        products,
+        invoice,
+        MatchConfig(supplier_code="262"),
+    )
+
+    assert bool(result.loc[0, "Match_Fact_DB"]) is True
+    assert result.loc[0, "Article_ID_Fournisseur"] == "BCSDAOVRAC"
+    assert result.loc[0, "Match_Methode"] == "epice_supplier_article_code_without_last_two_chars"
+
+
+def test_epice_truncated_reference_does_not_match_when_ambiguous():
+    products = normalize_product_database(
+        pd.DataFrame(
+            [
+                {
+                    "article_code": "A1001",
+                    "description": "Biscuits Caramel Sel Guerande VRAC",
+                    "supplier_code": "262",
+                    "supplier_article_code": "BCSDAOVRAC",
+                    "current_price": 43.35,
+                    "currency": "EUR",
+                },
+                {
+                    "article_code": "A1002",
+                    "description": "Biscuits Caramel Sel Guerande autre",
+                    "supplier_code": "262",
+                    "supplier_article_code": "BCSDAOVRZZ",
+                    "current_price": 43.35,
+                    "currency": "EUR",
+                },
+            ]
+        )
+    )
+    invoice = pd.DataFrame(
+        [
+            {
+                "supplier_article_code": "BCSDAOVR",
+                "description": "Biscuits Caramel Sel Guerande VRAC",
+                "unit_price": 43.35,
+                "currency": "EUR",
+            }
+        ]
+    )
+
+    result = compare_invoice_to_database(
+        products,
+        invoice,
+        MatchConfig(supplier_code="262", allow_description_fallback=False),
+    )
+
+    assert bool(result.loc[0, "Match_Fact_DB"]) is False

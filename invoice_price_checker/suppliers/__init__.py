@@ -6,6 +6,7 @@ import unicodedata
 from invoice_price_checker.suppliers.agidra import AgidraParser
 from invoice_price_checker.suppliers.base import SupplierInvoiceParser
 from invoice_price_checker.suppliers.dds import DdsParser
+from invoice_price_checker.suppliers.ecodis import EcodisParser
 from invoice_price_checker.suppliers.ekibio import EkibioParser
 from invoice_price_checker.suppliers.epice import EpiceParser
 from invoice_price_checker.suppliers.generic import GenericSupplierParser
@@ -16,6 +17,7 @@ from invoice_price_checker.suppliers.relais_vert import RelaisVertParser
 _PARSERS: dict[str, type[SupplierInvoiceParser]] = {
     AgidraParser.supplier_code: AgidraParser,
     DdsParser.supplier_code: DdsParser,
+    EcodisParser.supplier_code: EcodisParser,
     GenericSupplierParser.supplier_code: GenericSupplierParser,
     EkibioParser.supplier_code: EkibioParser,
     EpiceParser.supplier_code: EpiceParser,
@@ -26,6 +28,7 @@ _PARSERS: dict[str, type[SupplierInvoiceParser]] = {
 _DETECTION_KEYWORDS: dict[str, tuple[str, ...]] = {
     AgidraParser.supplier_code: ("agidra",),
     DdsParser.supplier_code: ("ysbonfacpdds", "dds"),
+    EcodisParser.supplier_code: ("sdeb ecodis", "facture ecodis", "facture@ecodis.info", "42921631000046"),
     EkibioParser.supplier_code: ("ekibio",),
     EpiceParser.supplier_code: ("epice",),
     HalleBioOccitanieParser.supplier_code: ("halle bio occitanie", "halle bio"),
