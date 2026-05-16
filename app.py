@@ -264,7 +264,10 @@ with st.sidebar:
         st.caption(f"Created: {_format_timestamp(status['created_at'])}")
         st.caption(f"Modified: {_format_timestamp(status['modified_at'])}")
     else:
-        st.warning("Default database is missing. Refresh from Odoo before running checks, or upload a database manually.")
+        st.warning(
+            "Base articles locale absente. Sur Streamlit Community Cloud, cliquez sur "
+            "Refresh database from Odoo avant de traiter une facture, ou chargez une base manuellement."
+        )
 
     database_source = st.radio(
         "Database source",
@@ -346,7 +349,10 @@ with st.sidebar:
 
 
 if not invoice_file:
-    st.info("Upload a supplier PDF invoice to begin.")
+    if not status["exists"] and database_file is None:
+        st.info("Rafraichissez d'abord la base depuis Odoo ou chargez une base articles, puis ajoutez une facture PDF.")
+    else:
+        st.info("Upload a supplier PDF invoice to begin.")
     st.stop()
 
 if not st.session_state.get("analysis_started", False):
