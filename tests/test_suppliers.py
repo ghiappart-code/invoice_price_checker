@@ -14,6 +14,16 @@ def test_detect_supplier_from_text_finds_ecodis_header():
     assert detect_supplier_from_text(text) == "227"
 
 
+def test_detect_supplier_from_text_finds_agidra_legal_footer():
+    text = (
+        "FACTURE\n"
+        + ("ligne produit sans nom fournisseur\n" * 80)
+        + "Siège social : SNC AGIDRA - SIRET : 96350030100030 - webagidra@agidra.com"
+    )
+
+    assert detect_supplier_from_text(text) == "329"
+
+
 def test_detect_supplier_from_text_returns_none_for_unknown_supplier():
     assert detect_supplier_from_text("Facture ACME inconnue") is None
 

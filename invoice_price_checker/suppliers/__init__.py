@@ -35,6 +35,15 @@ _DETECTION_KEYWORDS: dict[str, tuple[str, ...]] = {
     RelaisVertParser.supplier_code: ("relais-vert.com", "relais vert"),
 }
 
+_FULL_TEXT_DETECTION_KEYWORDS: dict[str, tuple[str, ...]] = {
+    AgidraParser.supplier_code: (
+        "webagidra@agidra.com",
+        "96350030100030",
+        "FR49963500301",
+        "SNC AGIDRA",
+    ),
+}
+
 _SUPPLIER_DETECTION_HEADER_CHARS = 1200
 
 
@@ -63,6 +72,11 @@ def detect_supplier_from_text(text: str) -> str | None:
     text_key = _supplier_detection_key(text[:_SUPPLIER_DETECTION_HEADER_CHARS])
     for supplier_code, keywords in _DETECTION_KEYWORDS.items():
         if any(_has_supplier_keyword(text_key, keyword) for keyword in keywords):
+            return supplier_code
+
+    full_text_key = _supplier_detection_key(text)
+    for supplier_code, keywords in _FULL_TEXT_DETECTION_KEYWORDS.items():
+        if any(_has_supplier_keyword(full_text_key, keyword) for keyword in keywords):
             return supplier_code
     return None
 
