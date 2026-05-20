@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+import subprocess
 
 import pandas as pd
 import streamlit as st
@@ -21,6 +22,8 @@ from invoice_price_checker.models import MatchConfig
 from invoice_price_checker.suppliers import detect_supplier_from_text, get_parser, list_suppliers, supplier_label
 from invoice_price_checker.text import extract_pdf_text
 
+
+APP_VERSION = "2026-05-20-1"
 
 st.set_page_config(page_title="Invoice Price Checker", layout="wide")
 
@@ -45,6 +48,21 @@ def _download_workbook(sheets: dict[str, pd.DataFrame]) -> bytes:
             sheet.to_excel(writer, index=False, sheet_name=name[:31])
         _format_workbook(writer)
     return buffer.getvalue()
+
+
+def _git_commit_short() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except Exception:
+        return None
+    commit = result.stdout.strip()
+    return commit or None
 
 
 def _calculation_notes() -> pd.DataFrame:
@@ -252,6 +270,10 @@ def _render_odoo_update_controls(odoo_update_rows: pd.DataFrame, invoice_stem: s
 
 with st.sidebar:
     st.header("Paramètres")
+    st.caption(f"Version application : {APP_VERSION}")
+    if commit := _git_commit_short():
+        st.caption(f"Commit : {commit}")
+
     supplier_id = st.selectbox(
         "Fournisseur de la facture",
         list_suppliers(include_generic=False),
@@ -396,11 +418,13 @@ config = MatchConfig(
 result = compare_invoice_to_database(products, invoice.lines, config)
 invoice_stem = _invoice_stem(invoice_file)
 
-summary_cols = st.columns(4)
+summary_cols = st.columns(6)
 summary_cols[0].metric("Invoice lines", len(invoice.lines))
 summary_cols[1].metric("Matched", int(result["Match_Fact_DB"].sum()))
 summary_cols[2].metric("Price changes", int(result["PU_Modif"].sum()))
 summary_cols[3].metric("Unmatched", int((~result["Match_Fact_DB"]).sum()))
+summary_cols[4].metric("Abnormal", int(result["Ecart_Prix_Anormal"].sum()))
+summary_cols[5].metric("Blocked", int(result["Blocage_Modif"].sum()))
 
 st.subheader("Invoice Metadata")
 metadata_df = pd.DataFrame(
