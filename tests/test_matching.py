@@ -201,3 +201,43 @@ def test_epice_truncated_reference_does_not_match_when_ambiguous():
     )
 
     assert bool(result.loc[0, "Match_Fact_DB"]) is False
+
+
+def test_description_match_is_flagged_for_manual_review():
+    products = normalize_product_database(
+        pd.DataFrame(
+            [
+                {
+                    "article_code": "A1001",
+                    "description": "Organic flour 1kg",
+                    "supplier_code": "GENERIC",
+                    "supplier_article_code": "FLOUR-DB",
+                    "current_price": 2.50,
+                    "currency": "EUR",
+                }
+            ]
+        )
+    )
+    invoice = pd.DataFrame(
+        [
+            {
+                "supplier_article_code": "FLOUR-INVOICE",
+                "description": "Organic flour 1kg",
+                "unit_price": 2.75,
+                "currency": "EUR",
+            }
+        ]
+    )
+
+    result = compare_invoice_to_database(
+        products,
+        invoice,
+        MatchConfig(supplier_code="GENERIC"),
+    )
+
+    assert bool(result.loc[0, "Match_Fact_DB"]) is True
+    assert result.loc[0, "Match_Methode"] == "description"
+    assert bool(result.loc[0, "PU_Modif"]) is False
+    assert bool(result.loc[0, "Blocage_Modif"]) is True
+    assert bool(result.loc[0, "Ecart_Prix_Anormal"]) is True
+    assert result.loc[0, "Raison_du_Blocage"] == "reference differente a verifier"

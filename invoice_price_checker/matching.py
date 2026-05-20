@@ -84,9 +84,23 @@ def compare_invoice_to_database(
     result = pd.DataFrame(rows)
     if result.empty:
         return pd.DataFrame(columns=OUTPUT_COLUMNS)
+    result = _flag_description_matches_for_manual_review(result)
     result = _flag_duplicate_invoice_lines(result)
     result = result[INTERNAL_OUTPUT_COLUMNS].rename(columns=OUTPUT_COLUMN_RENAMES)
     return _round_output_numbers(result)
+
+
+def _flag_description_matches_for_manual_review(result: pd.DataFrame) -> pd.DataFrame:
+    flagged = result.copy()
+    description_match_mask = flagged["match_method"] == "description"
+    if not description_match_mask.any():
+        return flagged
+
+    flagged.loc[description_match_mask, "price_changed"] = False
+    flagged.loc[description_match_mask, "abnormal_change"] = True
+    flagged.loc[description_match_mask, "change_blocked"] = True
+    flagged.loc[description_match_mask, "block_reason"] = "reference differente a verifier"
+    return flagged
 
 
 def _flag_duplicate_invoice_lines(result: pd.DataFrame) -> pd.DataFrame:
