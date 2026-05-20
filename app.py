@@ -108,6 +108,8 @@ def _format_workbook(writer: pd.ExcelWriter) -> None:
 
 
 st.title("Invoice Price Checker")
+if status_message := st.session_state.pop("app_status_message", None):
+    st.info(status_message)
 
 
 
@@ -139,7 +141,7 @@ def _analysis_signature(
     allow_description_fallback: bool,
 ) -> tuple[object, ...]:
     database_signature: object
-    if database_source == "Manual upload" or not status["exists"]:
+    if database_source == "Chargement manuel" or not status["exists"]:
         database_signature = ("upload", _uploaded_file_signature(database_file))
     else:
         database_signature = (
@@ -249,77 +251,79 @@ def _render_odoo_update_controls(odoo_update_rows: pd.DataFrame, invoice_stem: s
 
 
 with st.sidebar:
-    st.header("Inputs")
+    st.header("Paramètres")
     supplier_id = st.selectbox(
         "Fournisseur de la facture",
         list_suppliers(include_generic=False),
         format_func=supplier_label,
     )
 
-    st.subheader("Product database")
+    st.subheader("Base de données articles")
     data_path = default_database_path()
     status = database_status(data_path)
     if status["exists"]:
-        st.caption(f"Default database: `{data_path.name}`")
-        st.caption(f"Created: {_format_timestamp(status['created_at'])}")
-        st.caption(f"Modified: {_format_timestamp(status['modified_at'])}")
+        st.caption(f"Base de données actuelle : `{data_path.name}`")
+        st.caption(f"Créée le : {_format_timestamp(status['created_at'])}")
+        st.caption(f"Modifiée le : {_format_timestamp(status['modified_at'])}")
     else:
         st.warning(
             "Base articles locale absente. Sur Streamlit Community Cloud, cliquez sur "
-            "Refresh database from Odoo avant de traiter une facture, ou chargez une base manuellement."
+            "Charger la base articles depuis Odoo avant de traiter une facture, ou chargez une base manuellement."
         )
 
     database_source = st.radio(
-        "Database source",
-        ["Default local database", "Manual upload"],
+        "Source de la base articles",
+        ["Base locale actuelle", "Chargement manuel"],
         disabled=not status["exists"],
     )
-    refresh_database = st.button("Refresh database from Odoo")
+    refresh_database = st.button("Charger la base articles depuis Odoo")
     if refresh_database:
         try:
-            with st.spinner("Refreshing article database from Odoo..."):
+            with st.spinner("Chargement de la base articles depuis Odoo..."):
                 refreshed = refresh_articles_database(_odoo_config_from_streamlit(), data_path)
-            st.success(f"Database refreshed: {len(refreshed)} rows")
+            st.session_state["app_status_message"] = (
+                f"Chargement terminé : {len(refreshed)} articles chargés depuis Odoo."
+            )
             st.rerun()
         except Exception as exc:
-            st.error(f"Could not refresh database from Odoo: {exc}")
+            st.error(f"Impossible de charger la base articles depuis Odoo : {exc}")
 
     database_file = None
-    if database_source == "Manual upload" or not status["exists"]:
-        database_file = st.file_uploader("Product database", type=["csv", "xlsx", "xls", "data"])
-    invoice_file = st.file_uploader("Supplier invoice PDF", type=["pdf"])
+    if database_source == "Chargement manuel" or not status["exists"]:
+        database_file = st.file_uploader("Base de données articles", type=["csv", "xlsx", "xls", "data"])
+    invoice_file = st.file_uploader("Facture fournisseur PDF", type=["pdf"])
 
-    st.header("Matching")
+    st.header("Conditions")
     borne_inf = st.number_input(
-        "Lower price-change limit",
+        "Écart minimum à la baisse en €",
         value=-0.10,
         step=0.01,
         format="%.2f",
-        help="A price decrease is treated as changed only below this value.",
+        help="Une baisse de prix est traitée comme un changement seulement en dessous de cette valeur.",
     )
     borne_sup = st.number_input(
-        "Upper price-change limit",
+        "Écart minimum à la hausse en €",
         value=0.05,
         step=0.01,
         format="%.2f",
-        help="A price increase is treated as changed only above this value.",
+        help="Une hausse de prix est traitée comme un changement seulement au-dessus de cette valeur.",
     )
     abnormal_ratio = st.number_input(
-        "Abnormal ratio",
+        "Ratio Écart/Prix actuel anormal",
         min_value=0.0,
         value=0.30,
         step=0.05,
         format="%.2f",
-        help="Rows above this absolute price-change ratio are isolated for manual review.",
+        help="Les lignes au-dessus de ce ratio absolu sont isolées pour revue manuelle.",
     )
     allow_description_fallback = st.checkbox(
-        "Allow description fallback",
+        "Autoriser le matching par désignation",
         value=True,
-        help="Use normalized descriptions when supplier article references do not match.",
+        help="Utiliser les désignations normalisées quand les références fournisseur ne correspondent pas.",
     )
 
     analysis_disabled = not invoice_file or (
-        (database_source == "Manual upload" or not status["exists"]) and database_file is None
+        (database_source == "Chargement manuel" or not status["exists"]) and database_file is None
     )
     current_analysis_signature = _analysis_signature(
         invoice_file,
@@ -352,7 +356,7 @@ if not invoice_file:
     if not status["exists"] and database_file is None:
         st.info("Rafraichissez d'abord la base depuis Odoo ou chargez une base articles, puis ajoutez une facture PDF.")
     else:
-        st.info("Upload a supplier PDF invoice to begin.")
+        st.info("Téléchargez la facture à traiter.")
     st.stop()
 
 if not st.session_state.get("analysis_started", False):
@@ -362,16 +366,16 @@ if not st.session_state.get("analysis_started", False):
 _validate_invoice_supplier(invoice_file, supplier_id)
 
 try:
-    if database_source == "Default local database" and status["exists"]:
+    if database_source == "Base locale actuelle" and status["exists"]:
         with data_path.open("rb") as handle:
             products = load_product_database(handle)
     elif database_file:
         products = load_product_database(database_file)
     else:
-        st.info("Choose a database source before running the check.")
+        st.info("Choisissez une source de base articles avant de lancer l'analyse.")
         st.stop()
 except Exception as exc:
-    st.error(f"Could not read product database: {exc}")
+    st.error(f"Impossible de lire la base articles : {exc}")
     st.stop()
 
 parser = get_parser(supplier_id)
