@@ -156,7 +156,6 @@ def _analysis_signature(
     borne_inf: float,
     borne_sup: float,
     abnormal_ratio: float,
-    allow_description_fallback: bool,
 ) -> tuple[object, ...]:
     database_signature: object
     if database_source == "Chargement manuel" or not status["exists"]:
@@ -175,7 +174,6 @@ def _analysis_signature(
         float(borne_inf),
         float(borne_sup),
         float(abnormal_ratio),
-        bool(allow_description_fallback),
     )
 
 
@@ -338,12 +336,6 @@ with st.sidebar:
         format="%.2f",
         help="Les lignes au-dessus de ce ratio absolu sont isolées pour revue manuelle.",
     )
-    allow_description_fallback = st.checkbox(
-        "Autoriser le matching par désignation",
-        value=True,
-        help="Utiliser les désignations normalisées quand les références fournisseur ne correspondent pas.",
-    )
-
     analysis_disabled = not invoice_file or (
         (database_source == "Chargement manuel" or not status["exists"]) and database_file is None
     )
@@ -357,7 +349,6 @@ with st.sidebar:
         borne_inf,
         borne_sup,
         abnormal_ratio,
-        allow_description_fallback,
     )
     if st.session_state.get("analysis_signature") != current_analysis_signature:
         st.session_state["analysis_started"] = False
@@ -413,7 +404,7 @@ config = MatchConfig(
     borne_inf=borne_inf,
     borne_sup=borne_sup,
     abnormal_ratio=abnormal_ratio,
-    allow_description_fallback=allow_description_fallback,
+    allow_description_fallback=True,
 )
 result = compare_invoice_to_database(products, invoice.lines, config)
 invoice_stem = _invoice_stem(invoice_file)

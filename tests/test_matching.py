@@ -239,5 +239,5 @@ def test_description_match_is_flagged_for_manual_review():
     assert result.loc[0, "Match_Methode"] == "description"
     assert bool(result.loc[0, "PU_Modif"]) is False
     assert bool(result.loc[0, "Blocage_Modif"]) is True
-    assert bool(result.loc[0, "Ecart_Prix_Anormal"]) is True
+    assert bool(result.loc[0, "Ecart_Prix_Anormal"]) is False
     assert result.loc[0, "Raison_du_Blocage"] == "reference differente a verifier"

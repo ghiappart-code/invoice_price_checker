@@ -97,7 +97,7 @@ def _flag_description_matches_for_manual_review(result: pd.DataFrame) -> pd.Data
         return flagged
 
     flagged.loc[description_match_mask, "price_changed"] = False
-    flagged.loc[description_match_mask, "abnormal_change"] = True
+    flagged.loc[description_match_mask, "abnormal_change"] = False
     flagged.loc[description_match_mask, "change_blocked"] = True
     flagged.loc[description_match_mask, "block_reason"] = "reference differente a verifier"
     return flagged
