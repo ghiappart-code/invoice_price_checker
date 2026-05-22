@@ -11,7 +11,7 @@ from invoice_price_checker.suppliers.base import SupplierInvoiceParser
 from invoice_price_checker.text import parse_decimal
 
 
-EKIBIO_ENERGY_TRANSPORT_SURCHARGE = 0.006
+EKIBIO_ENERGY_TRANSPORT_SURCHARGE_RATE = 0.006
 
 
 class EkibioParser(SupplierInvoiceParser):
@@ -33,11 +33,11 @@ class EkibioParser(SupplierInvoiceParser):
             full_text = "\n".join(page.get_text() for page in doc)
             metadata["invoice_number"] = self._find_invoice_number(full_text)
             metadata["invoice_date"] = self._find_invoice_date(full_text)
-            energy_transport_surcharge = self._energy_transport_surcharge(full_text)
-            metadata["taxe_gazole"] = energy_transport_surcharge
+            energy_transport_surcharge_rate = self._energy_transport_surcharge_rate(full_text)
+            metadata["taxe_gazole"] = f"{energy_transport_surcharge_rate:.1%}"
 
             for page_index, page in enumerate(doc, start=1):
-                records.extend(self._parse_page(page, page_index, energy_transport_surcharge))
+                records.extend(self._parse_page(page, page_index, energy_transport_surcharge_rate))
 
         lines = pd.DataFrame(records)
         metadata["line_count"] = len(lines)
@@ -53,12 +53,12 @@ class EkibioParser(SupplierInvoiceParser):
         self,
         page: object,
         page_index: int,
-        energy_transport_surcharge: float,
+        energy_transport_surcharge_rate: float,
     ) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []
         line_words = self._group_words_by_line(page.get_text("words"))
         for items in line_words:
-            row = self._row_from_items(items, page_index, energy_transport_surcharge)
+            row = self._row_from_items(items, page_index, energy_transport_surcharge_rate)
             if row:
                 rows.append(row)
         return rows
@@ -83,7 +83,7 @@ class EkibioParser(SupplierInvoiceParser):
         self,
         items: list[tuple],
         page_index: int,
-        energy_transport_surcharge: float,
+        energy_transport_surcharge_rate: float,
     ) -> dict[str, object]:
         reference = self._reference_from_items(items)
         if reference is None:
@@ -101,7 +101,7 @@ class EkibioParser(SupplierInvoiceParser):
         if unit_price is None:
             return {}
 
-        adjusted_unit_price = unit_price + energy_transport_surcharge
+        adjusted_unit_price = unit_price * (1 + energy_transport_surcharge_rate)
         return {
             "supplier_article_code": reference,
             "description": description,
@@ -111,7 +111,7 @@ class EkibioParser(SupplierInvoiceParser):
             "currency": "EUR",
             "remise_temp": remise_temp,
             "remise_detail": remise_detail,
-            "fuel_surcharge_amount": energy_transport_surcharge,
+            "fuel_surcharge_pct": energy_transport_surcharge_rate * 100,
             "supplier_unit_ratio_override": self._unit_ratio_override(quantity, unit_price, amount),
             "gross_unit_price": gross_price,
             "line_amount": amount,
@@ -151,9 +151,9 @@ class EkibioParser(SupplierInvoiceParser):
         # EKIBIO legend: b = ponctuelle, d = promo. These are treated as temporary discounts.
         return bool(re.search(r"\b[bd]:", remise_detail, re.IGNORECASE))
 
-    def _energy_transport_surcharge(self, text: str) -> float:
+    def _energy_transport_surcharge_rate(self, text: str) -> float:
         if re.search(r"CONTRIBUTION\s+ENERGIE\s+TRANSPORT", text, re.IGNORECASE):
-            return EKIBIO_ENERGY_TRANSPORT_SURCHARGE
+            return EKIBIO_ENERGY_TRANSPORT_SURCHARGE_RATE
         return 0.0
 
     def _find_invoice_number(self, text: str) -> str | None:

@@ -31,7 +31,6 @@ class RelaisVertParser(SupplierInvoiceParser):
             metadata["invoice_number"] = self._find_invoice_number(full_text)
             metadata["invoice_date"] = self._find_invoice_date(full_text)
             fuel_pct = self._find_fuel_surcharge_pct(full_text)
-            metadata["fuel_surcharge_pct"] = fuel_pct
             metadata["taxe_gazole"] = f"{fuel_pct:g}%"
 
             for page_index, page in enumerate(doc, start=1):
