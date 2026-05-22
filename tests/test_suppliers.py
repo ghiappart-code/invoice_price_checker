@@ -1,5 +1,6 @@
 from invoice_price_checker.suppliers import detect_supplier_from_text, list_suppliers
 from invoice_price_checker.suppliers.ecodis import EcodisParser
+from invoice_price_checker.suppliers.ekibio import EKIBIO_ENERGY_TRANSPORT_SURCHARGE, EkibioParser
 
 
 def test_detect_supplier_from_text_finds_dds_header():
@@ -80,3 +81,34 @@ def test_ecodis_line_uses_net_price_without_temporary_discount():
     assert row["gross_unit_price"] == 2.20
     assert row["remise_temp"] == 0
     assert row["remise_detail"] == ""
+
+
+def test_ekibio_detects_energy_transport_surcharge():
+    parser = EkibioParser()
+
+    assert parser._energy_transport_surcharge("CONTRIBUTION ENERGIE TRANSPORT") == EKIBIO_ENERGY_TRANSPORT_SURCHARGE
+    assert parser._energy_transport_surcharge("Facture sans contribution") == 0.0
+
+
+def test_ekibio_line_adds_energy_transport_surcharge_to_adjusted_price():
+    parser = EkibioParser()
+    row = parser._row_from_items(
+        [
+            (20.0, 100.0, 45.0, 110.0, "010154"),
+            (55.0, 100.0, 120.0, 110.0, "BOR"),
+            (122.0, 100.0, 180.0, 110.0, "SAUCE"),
+            (545.0, 100.0, 570.0, 110.0, "15"),
+            (600.0, 100.0, 625.0, 110.0, "1.95"),
+            (638.0, 100.0, 670.0, 110.0, "a:11%"),
+            (672.0, 100.0, 704.0, 110.0, "b:5%"),
+            (705.0, 100.0, 730.0, 110.0, "1.65"),
+            (760.0, 100.0, 790.0, 110.0, "24.75"),
+        ],
+        1,
+        EKIBIO_ENERGY_TRANSPORT_SURCHARGE,
+    )
+
+    assert row["unit_price"] == 1.65
+    assert row["adjusted_unit_price"] == 1.65 + EKIBIO_ENERGY_TRANSPORT_SURCHARGE
+    assert row["fuel_surcharge_amount"] == EKIBIO_ENERGY_TRANSPORT_SURCHARGE
+    assert row["remise_temp"] == 1
