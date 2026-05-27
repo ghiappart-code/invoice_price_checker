@@ -408,14 +408,17 @@ config = MatchConfig(
 )
 result = compare_invoice_to_database(products, invoice.lines, config)
 invoice_stem = _invoice_stem(invoice_file)
+changed = result[result["PU_Modif"]].copy()
+odoo_update_rows = prepare_odoo_update_rows(changed)
 
-summary_cols = st.columns(6)
+summary_cols = st.columns(7)
 summary_cols[0].metric("Invoice lines", len(invoice.lines))
 summary_cols[1].metric("Matched", int(result["Match_Fact_DB"].sum()))
 summary_cols[2].metric("Price changes", int(result["PU_Modif"].sum()))
-summary_cols[3].metric("Unmatched", int((~result["Match_Fact_DB"]).sum()))
-summary_cols[4].metric("Abnormal", int(result["Ecart_Prix_Anormal"].sum()))
-summary_cols[5].metric("Blocked", int(result["Blocage_Modif"].sum()))
+summary_cols[3].metric("Odoo changes", len(odoo_update_rows))
+summary_cols[4].metric("Unmatched", int((~result["Match_Fact_DB"]).sum()))
+summary_cols[5].metric("Abnormal", int(result["Ecart_Prix_Anormal"].sum()))
+summary_cols[6].metric("Blocked", int(result["Blocage_Modif"].sum()))
 
 st.subheader("Invoice Metadata")
 metadata_df = pd.DataFrame(
@@ -423,11 +426,9 @@ metadata_df = pd.DataFrame(
 )
 st.dataframe(metadata_df, use_container_width=True, hide_index=True)
 
-changed = result[result["PU_Modif"]].copy()
 unmatched = result[~result["Match_Fact_DB"]].copy()
 abnormal = result[result["Ecart_Prix_Anormal"]].copy()
 blocked = result[result["Blocage_Modif"]].copy()
-odoo_update_rows = prepare_odoo_update_rows(changed)
 workbook_sheets = {
     "price_changes": changed,
     "odoo_update_review": odoo_update_rows,
