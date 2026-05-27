@@ -94,6 +94,7 @@ class RelaisVertParser(SupplierInvoiceParser):
         p_discount = self._number_in_band(items, 450, 463) or 0.0
         e_discount = self._number_in_band(items, 463, 477) or 0.0
         quantity = self._number_in_band(items, 360, 382)
+        amount = self._number_in_band(items, 515, 542)
 
         adjusted_price = unit_price * (1 + fuel_pct / 100) if unit_price is not None else None
         remise_temp = int(bool(q_discount or p_discount or e_discount))
@@ -120,7 +121,9 @@ class RelaisVertParser(SupplierInvoiceParser):
             "fuel_surcharge_pct": fuel_pct,
             "remise_temp": remise_temp,
             "remise_detail": remise_detail,
+            "supplier_unit_ratio_override": self._unit_ratio_override(quantity, unit_price, amount),
             "gross_unit_price": gross_price,
+            "line_amount": amount,
             "page": page_index,
         }
 
@@ -143,6 +146,18 @@ class RelaisVertParser(SupplierInvoiceParser):
             if x_min <= item[0] <= x_max and parse_decimal(item[4]) is not None
         ]
         return values[0] if values else None
+
+    def _unit_ratio_override(
+        self,
+        quantity: float | None,
+        unit_price: float | None,
+        amount: float | None,
+    ) -> float | None:
+        if quantity is None or unit_price is None or amount is None:
+            return None
+        if abs(quantity * unit_price - amount) < 0.03:
+            return 1.0
+        return None
 
     def _find_invoice_number(self, text: str) -> str | None:
         match = re.search(r"\bFC\d+\b", text)

@@ -1,6 +1,7 @@
 from invoice_price_checker.suppliers import detect_supplier_from_text, list_suppliers
 from invoice_price_checker.suppliers.ecodis import EcodisParser
 from invoice_price_checker.suppliers.ekibio import EKIBIO_ENERGY_TRANSPORT_SURCHARGE_RATE, EkibioParser
+from invoice_price_checker.suppliers.relais_vert import RelaisVertParser
 
 
 def test_detect_supplier_from_text_finds_dds_header():
@@ -81,6 +82,31 @@ def test_ecodis_line_uses_net_price_without_temporary_discount():
     assert row["gross_unit_price"] == 2.20
     assert row["remise_temp"] == 0
     assert row["remise_detail"] == ""
+
+
+def test_relais_vert_overrides_unit_ratio_when_net_price_already_matches_line_amount():
+    parser = RelaisVertParser()
+    row = parser._row_from_items(
+        "39345",
+        [
+            (368.0, 338.5, 376.8, 349.5, "25"),
+            (397.8, 338.5, 417.9, 349.5, "12,49"),
+            (439.0, 338.7, 446.7, 348.3, "12"),
+            (487.8, 338.7, 507.9, 349.8, "10,99"),
+            (517.2, 338.5, 541.7, 349.5, "274,75"),
+            (89.1, 338.7, 118.8, 348.3, "AMANDE"),
+            (120.7, 338.7, 171.7, 348.3, "DECORTIQUEE"),
+            (175.6, 338.7, 198.0, 348.3, "(25KG)"),
+            (199.8, 338.7, 233.2, 348.3, "ESPAGNE"),
+        ],
+        1,
+        0.4,
+    )
+
+    assert row["quantity"] == 25
+    assert row["unit_price"] == 10.99
+    assert row["line_amount"] == 274.75
+    assert row["supplier_unit_ratio_override"] == 1.0
 
 
 def test_ekibio_detects_energy_transport_surcharge():
