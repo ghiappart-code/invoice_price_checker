@@ -84,7 +84,7 @@ def test_ecodis_line_uses_net_price_without_temporary_discount():
     assert row["remise_detail"] == ""
 
 
-def test_relais_vert_overrides_unit_ratio_when_net_price_already_matches_line_amount():
+def test_relais_vert_proposes_unit_ratio_override_when_net_price_already_matches_line_amount():
     parser = RelaisVertParser()
     row = parser._row_from_items(
         "39345",
@@ -106,7 +106,7 @@ def test_relais_vert_overrides_unit_ratio_when_net_price_already_matches_line_am
     assert row["quantity"] == 25
     assert row["unit_price"] == 10.99
     assert row["line_amount"] == 274.75
-    assert row["supplier_unit_ratio_override"] == 1.0
+    assert row["supplier_unit_ratio_override_when_abnormal"] == 1.0
 
 
 def test_ekibio_detects_energy_transport_surcharge():

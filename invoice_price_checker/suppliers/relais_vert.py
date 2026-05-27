@@ -121,7 +121,7 @@ class RelaisVertParser(SupplierInvoiceParser):
             "fuel_surcharge_pct": fuel_pct,
             "remise_temp": remise_temp,
             "remise_detail": remise_detail,
-            "supplier_unit_ratio_override": self._unit_ratio_override(quantity, unit_price, amount),
+            "supplier_unit_ratio_override_when_abnormal": self._unit_ratio_override_when_abnormal(quantity, unit_price, amount),
             "gross_unit_price": gross_price,
             "line_amount": amount,
             "page": page_index,
@@ -147,7 +147,7 @@ class RelaisVertParser(SupplierInvoiceParser):
         ]
         return values[0] if values else None
 
-    def _unit_ratio_override(
+    def _unit_ratio_override_when_abnormal(
         self,
         quantity: float | None,
         unit_price: float | None,

@@ -123,6 +123,86 @@ def test_abnormal_price_change_has_readable_block_reason():
     assert result.loc[0, "Raison_du_Blocage"] == "ecart de prix > 30%"
 
 
+def test_conditional_unit_ratio_override_is_used_only_when_database_ratio_is_abnormal():
+    products = normalize_product_database(
+        pd.DataFrame(
+            [
+                {
+                    "article_code": "A1001",
+                    "description": "Amande decortiquee vrac",
+                    "supplier_code": "254",
+                    "supplier_article_code": "39345",
+                    "current_price": 9.30,
+                    "supplier_unit_ratio": 0.04,
+                    "currency": "EUR",
+                }
+            ]
+        )
+    )
+    invoice = pd.DataFrame(
+        [
+            {
+                "supplier_article_code": "39345",
+                "description": "Amande decortiquee (25kg)",
+                "unit_price": 10.99,
+                "adjusted_unit_price": 11.03396,
+                "supplier_unit_ratio_override_when_abnormal": 1.0,
+                "currency": "EUR",
+            }
+        ]
+    )
+
+    result = compare_invoice_to_database(
+        products,
+        invoice,
+        MatchConfig(supplier_code="254", abnormal_ratio=0.30),
+    )
+
+    assert result.loc[0, "DB_Fournisseur_Unit_Ratio"] == 1.0
+    assert result.loc[0, "Fact_PU_unitaire"] == 11.03396
+    assert bool(result.loc[0, "Ecart_Prix_Anormal"]) is False
+
+
+def test_conditional_unit_ratio_override_is_ignored_when_database_ratio_is_not_abnormal():
+    products = normalize_product_database(
+        pd.DataFrame(
+            [
+                {
+                    "article_code": "A1001",
+                    "description": "Biscuits coeur orange vrac",
+                    "supplier_code": "254",
+                    "supplier_article_code": "33509",
+                    "current_price": 17.59,
+                    "supplier_unit_ratio": 1 / 3,
+                    "currency": "EUR",
+                }
+            ]
+        )
+    )
+    invoice = pd.DataFrame(
+        [
+            {
+                "supplier_article_code": "33509",
+                "description": "Biscuits coeur orange chocolat noir vrac (3kg)",
+                "unit_price": 52.53,
+                "adjusted_unit_price": 52.74012,
+                "supplier_unit_ratio_override_when_abnormal": 1.0,
+                "currency": "EUR",
+            }
+        ]
+    )
+
+    result = compare_invoice_to_database(
+        products,
+        invoice,
+        MatchConfig(supplier_code="254", abnormal_ratio=0.30),
+    )
+
+    assert round(result.loc[0, "DB_Fournisseur_Unit_Ratio"], 6) == round(1 / 3, 6)
+    assert round(result.loc[0, "Fact_PU_unitaire"], 3) == 17.58
+    assert bool(result.loc[0, "Ecart_Prix_Anormal"]) is False
+
+
 def test_epice_matches_database_reference_with_extra_two_character_suffix():
     products = normalize_product_database(
         pd.DataFrame(

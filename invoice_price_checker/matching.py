@@ -180,8 +180,15 @@ def _match_line(
 
     product = match.iloc[0]
     current_price = product["current_price"]
-    supplier_unit_ratio = _line_or_product_unit_ratio(line, product)
     invoice_price = line["adjusted_unit_price"]
+    supplier_unit_ratio = _line_or_product_unit_ratio(line, product)
+    supplier_unit_ratio = _conditional_unit_ratio_override(
+        line,
+        supplier_unit_ratio,
+        invoice_price,
+        current_price,
+        config,
+    )
     comparison_price = invoice_price * supplier_unit_ratio
     difference = comparison_price - current_price
     pct = difference / current_price if current_price else None
@@ -287,6 +294,46 @@ def _line_or_product_unit_ratio(line: pd.Series, product: pd.Series) -> float:
         except (TypeError, ValueError):
             pass
     return _numeric_or_zero(product.get("supplier_unit_ratio")) or 1.0
+
+
+def _conditional_unit_ratio_override(
+    line: pd.Series,
+    base_ratio: float,
+    invoice_price: float,
+    current_price: float,
+    config: MatchConfig,
+) -> float:
+    override = line.get("supplier_unit_ratio_override_when_abnormal")
+    if override is None or pd.isna(override):
+        return base_ratio
+    try:
+        override_ratio = float(override)
+    except (TypeError, ValueError):
+        return base_ratio
+
+    base_difference = invoice_price * base_ratio - current_price
+    override_difference = invoice_price * override_ratio - current_price
+    if _is_abnormal_price_change(base_difference, current_price, config) and not _is_abnormal_price_change(
+        override_difference,
+        current_price,
+        config,
+    ):
+        return override_ratio
+    return base_ratio
+
+
+def _is_abnormal_price_change(
+    difference: float,
+    current_price: float,
+    config: MatchConfig,
+) -> bool:
+    if not current_price:
+        return False
+    pct = difference / current_price
+    return bool(
+        abs(pct) > config.abnormal_ratio
+        and (difference < config.borne_inf or difference > config.borne_sup)
+    )
 
 
 def _strip_numeric_leading_zero_key(value: object) -> str:
