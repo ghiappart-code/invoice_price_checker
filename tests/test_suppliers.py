@@ -84,6 +84,30 @@ def test_ecodis_line_uses_net_price_without_temporary_discount():
     assert row["remise_detail"] == ""
 
 
+def test_ecodis_proposes_unit_ratio_override_when_net_price_already_matches_line_amount():
+    parser = EcodisParser()
+    row = parser._row_from_items(
+        "BV7151",
+        [
+            (125.0, 100.0, 140.0, 110.0, "1"),
+            (155.0, 100.0, 170.0, 110.0, "3"),
+            (178.0, 100.0, 210.0, 110.0, "Sac"),
+            (212.0, 100.0, 245.0, 110.0, "cabas"),
+            (247.0, 100.0, 290.0, 110.0, "assorti"),
+            (360.0, 100.0, 390.0, 110.0, "10,90"),
+            (448.0, 100.0, 490.0, 110.0, "10,30"),
+            (510.0, 100.0, 542.0, 110.0, "30,90"),
+            (542.0, 100.0, 568.0, 110.0, "20"),
+        ],
+        2,
+    )
+
+    assert row["quantity"] == 3
+    assert row["unit_price"] == 10.30
+    assert row["line_amount"] == 30.90
+    assert row["supplier_unit_ratio_override_when_abnormal"] == 1.0
+
+
 def test_relais_vert_proposes_unit_ratio_override_when_net_price_already_matches_line_amount():
     parser = RelaisVertParser()
     row = parser._row_from_items(
