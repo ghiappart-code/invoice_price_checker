@@ -161,4 +161,5 @@ def test_ekibio_line_applies_energy_transport_surcharge_rate_to_adjusted_price()
     assert row["unit_price"] == 1.65
     assert row["adjusted_unit_price"] == 1.65 * (1 + EKIBIO_ENERGY_TRANSPORT_SURCHARGE_RATE)
     assert row["fuel_surcharge_pct"] == EKIBIO_ENERGY_TRANSPORT_SURCHARGE_RATE * 100
+    assert row["supplier_unit_ratio_override_when_abnormal"] == 1.0
     assert row["remise_temp"] == 1

@@ -112,7 +112,7 @@ class EkibioParser(SupplierInvoiceParser):
             "remise_temp": remise_temp,
             "remise_detail": remise_detail,
             "fuel_surcharge_pct": energy_transport_surcharge_rate * 100,
-            "supplier_unit_ratio_override": self._unit_ratio_override(quantity, unit_price, amount),
+            "supplier_unit_ratio_override_when_abnormal": self._unit_ratio_override_when_abnormal(quantity, unit_price, amount),
             "gross_unit_price": gross_price,
             "line_amount": amount,
             "vat_code": vat_code,
@@ -127,7 +127,7 @@ class EkibioParser(SupplierInvoiceParser):
         ]
         return references[0] if references else None
 
-    def _unit_ratio_override(self, quantity: float | None, unit_price: float | None, amount: float | None) -> float | None:
+    def _unit_ratio_override_when_abnormal(self, quantity: float | None, unit_price: float | None, amount: float | None) -> float | None:
         if quantity is None or unit_price is None or amount is None:
             return None
         expected_amount = quantity * unit_price
