@@ -15,6 +15,10 @@ class AgidraParser(SupplierInvoiceParser):
     supplier_code = "329"
     display_name = "AGIDRA"
 
+    DESCRIPTION_START = 150
+    FC_DESCRIPTION_END = 260
+    FW_DESCRIPTION_END = 281
+
     def parse(self, file: BinaryIO) -> ParsedInvoice:
         import fitz
 
@@ -30,11 +34,31 @@ class AgidraParser(SupplierInvoiceParser):
             full_text = "\n".join(page.get_text() for page in doc)
             metadata["invoice_number"] = self._find_invoice_number(full_text)
             metadata["invoice_date"] = self._find_invoice_date(full_text)
+            layout = self._detect_layout(full_text)
+            metadata["layout"] = layout
             for page_index, page in enumerate(doc, start=1):
-                records.extend(self._parse_page(page, page_index))
+                records.extend(self._parse_page(page, page_index, layout))
 
         lines = pd.DataFrame(records)
+        expected_line_count = self._find_expected_line_count(full_text)
         metadata["line_count"] = len(lines)
+        metadata["expected_line_count"] = expected_line_count
+        metadata["line_count_verified"] = (
+            len(lines) == expected_line_count if expected_line_count is not None else None
+        )
+        if expected_line_count is not None and len(lines) != expected_line_count:
+            raise ValueError(
+                "Contrôle AGIDRA impossible : "
+                f"{expected_line_count} lignes annoncées, {len(lines)} lignes extraites."
+            )
+        validation_errors = self._validate_lines(lines)
+        metadata["line_validation_errors"] = validation_errors
+        metadata["lines_validated"] = not validation_errors
+        if validation_errors:
+            raise ValueError(
+                "Contrôle AGIDRA impossible pour les références : "
+                + ", ".join(validation_errors)
+            )
         return ParsedInvoice(
             supplier_code=self.supplier_code,
             invoice_number=metadata["invoice_number"],
@@ -43,19 +67,20 @@ class AgidraParser(SupplierInvoiceParser):
             metadata=metadata,
         )
 
-    def _parse_page(self, page: object, page_index: int) -> list[dict[str, object]]:
+    def _parse_page(self, page: object, page_index: int, layout: str) -> list[dict[str, object]]:
         lines = self._group_words_by_line(page.get_text("words"))
         starts = []
         for index, items in enumerate(lines):
             reference = self._reference_from_items(items)
-            if reference:
+            if reference and self._number_in_band(items, 468, 505) is not None:
                 starts.append((index, reference))
 
         rows: list[dict[str, object]] = []
         for position, (line_index, reference) in enumerate(starts):
             next_line_index = starts[position + 1][0] if position + 1 < len(starts) else len(lines)
-            block = [word for row in lines[line_index:next_line_index] for word in row]
-            row = self._row_from_block(reference, block, page_index)
+            block_lines = lines[line_index:next_line_index]
+            block = self._product_words(block_lines, layout)
+            row = self._row_from_block(reference, block, page_index, layout)
             if row:
                 rows.append(row)
         return rows
@@ -64,7 +89,7 @@ class AgidraParser(SupplierInvoiceParser):
         useful_words = [
             (x0, y0, x1, y1, text)
             for x0, y0, x1, y1, text, *_ in words
-            if 15 <= x0 <= 560 and 280 <= y0 <= 735
+            if 15 <= x0 <= 565 and 20 <= y0 <= 810
         ]
         useful_words.sort(key=lambda item: (round(item[1], 1), item[0]))
 
@@ -76,18 +101,52 @@ class AgidraParser(SupplierInvoiceParser):
                 lines[-1].append(word)
         return lines
 
-    def _row_from_block(self, reference: str, block: list[tuple], page_index: int) -> dict[str, object]:
+    def _product_words(self, lines: list[list[tuple]], layout: str) -> list[tuple]:
+        if not lines:
+            return []
+        description_end = self._description_end(layout)
+        product_lines = [lines[0]]
+        for line in lines[1:]:
+            if line[0][1] - product_lines[-1][0][1] > 15:
+                break
+            has_description = any(
+                self.DESCRIPTION_START <= item[0] < description_end for item in line
+            )
+            has_brand = layout == "fc_brand" and any(260 <= item[0] < 322 for item in line)
+            if not has_description and not has_brand:
+                break
+            product_lines.append(line)
+        return [word for line in product_lines for word in line]
+
+    def _row_from_block(
+        self,
+        reference: str,
+        block: list[tuple],
+        page_index: int,
+        layout: str,
+    ) -> dict[str, object]:
         start_y = min(item[1] for item in block if item[4].strip() == reference)
         first_line = [item for item in block if abs(item[1] - start_y) <= 4]
+        description_end = self._description_end(layout)
 
         description = " ".join(
             item[4]
             for item in block
-            if 150 <= item[0] < 325 and not self._is_footer_word(item[4])
+            if self.DESCRIPTION_START <= item[0] < description_end
         ).strip()
         conditionnement = " ".join(item[4] for item in block if 40 <= item[0] < 108).strip()
-        brand = " ".join(item[4] for item in block if 260 <= item[0] < 322).strip()
-        bio = self._text_in_band(first_line, 320, 345)
+        brand = (
+            " ".join(item[4] for item in block if 260 <= item[0] < 322).strip()
+            if layout == "fc_brand"
+            else ""
+        )
+        origin = self._text_in_band(first_line, 281, 306) if layout == "fw_customs" else None
+        customs_reference = self._text_in_band(first_line, 306, 342) if layout == "fw_customs" else None
+        bio = (
+            self._text_in_band(first_line, 342, 356)
+            if layout == "fw_customs"
+            else self._text_in_band(first_line, 320, 345)
+        )
         colis = self._number_in_band(first_line, 20, 44)
         quantity = self._number_in_band(first_line, 360, 390)
         gross_price = self._number_in_band(first_line, 392, 425)
@@ -115,6 +174,8 @@ class AgidraParser(SupplierInvoiceParser):
             "conditionnement": conditionnement,
             "brand": brand,
             "bio": bio,
+            "origin": origin,
+            "customs_reference": customs_reference,
             "vat_code": vat_code,
             "page": page_index,
         }
@@ -175,11 +236,37 @@ class AgidraParser(SupplierInvoiceParser):
         values = [item[4].strip() for item in items if x_min <= item[0] <= x_max and item[4].strip()]
         return " ".join(values) or None
 
-    def _is_footer_word(self, value: str) -> bool:
-        return value in {"La", "distribution", "des", "produits", "bio", "et", "en", "conversion", "est", "certifiée"}
+    def _detect_layout(self, text: str) -> str:
+        if re.search(r"\bOrigine\b", text) and re.search(r"Réf\s+douane", text, re.IGNORECASE):
+            return "fw_customs"
+        return "fc_brand"
+
+    def _description_end(self, layout: str) -> float:
+        return self.FW_DESCRIPTION_END if layout == "fw_customs" else self.FC_DESCRIPTION_END
+
+    def _find_expected_line_count(self, text: str) -> int | None:
+        matches = re.findall(r"Nb\s+Lignes\s*:\s*(\d+)", text, re.IGNORECASE)
+        if not matches:
+            return None
+        return int(matches[-1])
+
+    def _validate_lines(self, lines: pd.DataFrame) -> list[str]:
+        errors: list[str] = []
+        for _, line in lines.iterrows():
+            reference = str(line.get("supplier_article_code") or "?")
+            description = str(line.get("description") or "").strip()
+            quantity = line.get("quantity")
+            unit_price = line.get("unit_price")
+            amount = line.get("line_amount")
+            if not description or any(pd.isna(value) for value in (quantity, unit_price, amount)):
+                errors.append(reference)
+                continue
+            if abs(float(quantity) * float(unit_price) - float(amount)) >= 0.03:
+                errors.append(reference)
+        return errors
 
     def _find_invoice_number(self, text: str) -> str | None:
-        match = re.search(r"\bFCAG\d+-\d+\b", text)
+        match = re.search(r"\bF[CW]AG\d+-\d+\b", text)
         return match.group(0) if match else None
 
     def _find_invoice_date(self, text: str) -> str | None:

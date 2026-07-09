@@ -1,4 +1,5 @@
 from invoice_price_checker.suppliers import detect_supplier_from_text, list_suppliers
+from invoice_price_checker.suppliers.agidra import AgidraParser
 from invoice_price_checker.suppliers.ecodis import EcodisParser
 from invoice_price_checker.suppliers.ekibio import EKIBIO_ENERGY_TRANSPORT_SURCHARGE_RATE, EkibioParser
 from invoice_price_checker.suppliers.relais_vert import RelaisVertParser
@@ -163,3 +164,85 @@ def test_ekibio_line_applies_energy_transport_surcharge_rate_to_adjusted_price()
     assert row["fuel_surcharge_pct"] == EKIBIO_ENERGY_TRANSPORT_SURCHARGE_RATE * 100
     assert row["supplier_unit_ratio_override_when_abnormal"] == 1.0
     assert row["remise_temp"] == 1
+
+
+def test_agidra_recognizes_invoice_and_credit_numbers():
+    parser = AgidraParser()
+
+    assert parser._find_invoice_number("Facture FCAG92606-00749") == "FCAG92606-00749"
+    assert parser._find_invoice_number("Facture FWAG92607-00011") == "FWAG92607-00011"
+
+
+def test_agidra_reads_expected_line_count():
+    parser = AgidraParser()
+
+    assert parser._find_expected_line_count("Nb Lignes :  69") == 69
+    assert parser._find_expected_line_count("aucun total") is None
+
+
+def test_agidra_stops_product_at_large_vertical_gap():
+    parser = AgidraParser()
+    lines = [
+        [(156.0, 700.0, 190.0, 708.0, "FARINE")],
+        [(156.0, 709.0, 180.0, 717.0, "1KG")],
+        [(198.0, 731.0, 230.0, 739.0, "produits")],
+    ]
+
+    assert [word[4] for word in parser._product_words(lines, "fc_brand")] == ["FARINE", "1KG"]
+
+
+def test_agidra_keeps_words_from_top_and_bottom_of_continuation_pages():
+    parser = AgidraParser()
+    words = [
+        (115.0, 44.0, 135.0, 52.0, "179005", 0, 0, 0),
+        (156.0, 44.5, 190.0, 52.5, "MOUTARDE", 0, 0, 0),
+        (483.0, 44.0, 495.0, 52.0, "1,20", 0, 0, 0),
+        (115.0, 796.0, 135.0, 804.0, "177603", 0, 0, 0),
+        (156.0, 796.5, 200.0, 804.5, "VINAIGRETTE", 0, 0, 0),
+        (483.0, 796.0, 495.0, 804.0, "1,09", 0, 0, 0),
+    ]
+
+    lines = parser._group_words_by_line(words)
+
+    assert [parser._reference_from_items(line) for line in lines] == ["179005", "177603"]
+
+
+def test_agidra_separates_description_from_fc_brand():
+    parser = AgidraParser()
+    block = [
+        (115.0, 300.0, 135.0, 308.0, "1570181"),
+        (156.0, 300.5, 190.0, 308.5, "MELANGE"),
+        (192.0, 300.5, 225.0, 308.5, "LYON"),
+        (270.0, 300.0, 300.0, 308.0, "Agidra"),
+        (302.0, 300.0, 318.0, 308.0, "IDS"),
+        (376.0, 300.0, 384.0, 308.0, "18"),
+        (411.0, 300.0, 423.0, 308.0, "2,74"),
+        (483.0, 300.0, 495.0, 308.0, "2,74"),
+        (524.0, 300.0, 540.0, 308.0, "49,32"),
+    ]
+
+    row = parser._row_from_block("1570181", block, 1, "fc_brand")
+
+    assert row["description"] == "MELANGE LYON"
+    assert row["brand"] == "Agidra IDS"
+
+
+def test_agidra_separates_description_from_fw_customs_columns():
+    parser = AgidraParser()
+    block = [
+        (115.0, 300.0, 135.0, 308.0, "809000"),
+        (156.0, 300.5, 190.0, 308.5, "BOISSON"),
+        (192.0, 300.5, 230.0, 308.5, "VEGETALE"),
+        (294.0, 300.0, 303.0, 308.0, "IT"),
+        (312.0, 300.0, 340.0, 308.0, "22029915"),
+        (376.0, 300.0, 384.0, 308.0, "12"),
+        (411.0, 300.0, 423.0, 308.0, "1,68"),
+        (483.0, 300.0, 495.0, 308.0, "1,68"),
+        (524.0, 300.0, 540.0, 308.0, "20,16"),
+    ]
+
+    row = parser._row_from_block("809000", block, 1, "fw_customs")
+
+    assert row["description"] == "BOISSON VEGETALE"
+    assert row["origin"] == "IT"
+    assert row["customs_reference"] == "22029915"
