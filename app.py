@@ -284,12 +284,6 @@ with st.sidebar:
     if commit := _git_commit_short():
         st.caption(f"Commit : {commit}")
 
-    supplier_id = st.selectbox(
-        "Fournisseur de la facture",
-        list_suppliers(include_generic=False),
-        format_func=supplier_label,
-    )
-
     st.subheader("Base de données articles")
     data_path = default_database_path()
     status = database_status(data_path)
@@ -299,79 +293,74 @@ with st.sidebar:
             "ou charger un fichier contenant la base articles."
         )
 
-    local_source = "Base locale actuelle"
+    local_source = "Utiliser la base locale actuelle"
     manual_source = "Chargement manuel"
     odoo_source = "Télécharger depuis Odoo"
-    if "database_source" not in st.session_state:
-        st.session_state["database_source"] = local_source if status["exists"] else manual_source
-    database_source = st.session_state["database_source"]
-
-    if st.button(local_source, disabled=not status["exists"], key="select_local_database"):
-        st.session_state["database_source"] = local_source
-        database_source = local_source
-    if status["exists"]:
-        st.caption(f"Fichier utilisé : `{data_path.name}`")
-        st.caption(f"Créée le : {_format_timestamp(status['created_at'])}")
-        st.caption(f"Modifiée le : {_format_timestamp(status['modified_at'])}")
-    else:
-        st.caption("Aucune base locale disponible.")
-
-    if st.button(manual_source, key="select_manual_database"):
-        st.session_state["database_source"] = manual_source
-        database_source = manual_source
-    database_file = st.file_uploader(
-        "Base de données articles",
-        type=["csv", "xlsx", "xls", "data"],
-        disabled=database_source != manual_source,
+    database_sources = [local_source, manual_source, odoo_source]
+    database_source = st.radio(
+        "Action sur la base articles",
+        database_sources,
+        index=0 if status["exists"] else 1,
     )
 
-    if st.button(odoo_source, key="select_odoo_database"):
-        st.session_state["database_source"] = odoo_source
-        database_source = odoo_source
-    store_refreshed_database = st.checkbox(
-        "Enregistrer aussi comme base locale actuelle",
-        value=False,
-        disabled=database_source != odoo_source,
-        help="Par défaut, la base Odoo est seulement préparée pour téléchargement et n'est pas écrite dans data_files.",
-    )
-    refresh_database = st.button(
-        "Charger la base articles depuis Odoo",
-        disabled=database_source != odoo_source,
-    )
-    if refresh_database:
-        try:
-            with st.spinner("Chargement de la base articles depuis Odoo..."):
-                refreshed = fetch_articles_from_odoo(_odoo_config_from_streamlit())
-            st.session_state["odoo_database_df"] = refreshed
-            st.session_state["odoo_database_download"] = _download_data(refreshed)
-            st.session_state["odoo_database_download_count"] = len(refreshed)
-            st.session_state["odoo_database_signature"] = (
-                len(refreshed),
-                datetime.now().isoformat(timespec="seconds"),
-            )
-            st.success(
-                f"Base Odoo prête : {len(refreshed)} articles chargés. "
-                "Vous pouvez l'utiliser pour l'analyse ou la télécharger ci-dessous."
-            )
-            if store_refreshed_database:
-                data_path.parent.mkdir(parents=True, exist_ok=True)
-                with data_path.open("wb") as handle:
-                    pickle.dump(refreshed, handle)
-                st.info(f"Base enregistrée comme base locale actuelle : {data_path.name}")
-        except Exception as exc:
-            st.error(f"Impossible de charger la base articles depuis Odoo : {exc}")
+    database_file = None
+    if database_source == local_source:
+        if status["exists"]:
+            st.caption(f"Fichier utilisé : `{data_path.name}`")
+            st.caption(f"Créée le : {_format_timestamp(status['created_at'])}")
+            st.caption(f"Modifiée le : {_format_timestamp(status['modified_at'])}")
+        else:
+            st.caption("Aucune base locale disponible.")
 
-    if "odoo_database_download" in st.session_state:
-        count = st.session_state.get("odoo_database_download_count", "n/a")
-        st.download_button(
-            f"Télécharger la base Odoo ({count} articles)",
-            data=st.session_state["odoo_database_download"],
-            file_name="var_articles.data",
-            mime="application/octet-stream",
-            key="download_odoo_database_data",
-            disabled=database_source != odoo_source,
+    elif database_source == manual_source:
+        database_file = st.file_uploader("Base de données articles", type=["csv", "xlsx", "xls", "data"])
+
+    elif database_source == odoo_source:
+        store_refreshed_database = st.checkbox(
+            "Enregistrer aussi comme base locale actuelle",
+            value=False,
+            help="Par défaut, la base Odoo est seulement préparée pour téléchargement et n'est pas écrite dans data_files.",
         )
+        refresh_database = st.button("Charger la base articles depuis Odoo")
+        if refresh_database:
+            try:
+                with st.spinner("Chargement de la base articles depuis Odoo..."):
+                    refreshed = fetch_articles_from_odoo(_odoo_config_from_streamlit())
+                st.session_state["odoo_database_df"] = refreshed
+                st.session_state["odoo_database_download"] = _download_data(refreshed)
+                st.session_state["odoo_database_download_count"] = len(refreshed)
+                st.session_state["odoo_database_signature"] = (
+                    len(refreshed),
+                    datetime.now().isoformat(timespec="seconds"),
+                )
+                st.success(
+                    f"Base Odoo prête : {len(refreshed)} articles chargés. "
+                    "Vous pouvez l'utiliser pour l'analyse ou la télécharger ci-dessous."
+                )
+                if store_refreshed_database:
+                    data_path.parent.mkdir(parents=True, exist_ok=True)
+                    with data_path.open("wb") as handle:
+                        pickle.dump(refreshed, handle)
+                    st.info(f"Base enregistrée comme base locale actuelle : {data_path.name}")
+            except Exception as exc:
+                st.error(f"Impossible de charger la base articles depuis Odoo : {exc}")
 
+        if "odoo_database_download" in st.session_state:
+            count = st.session_state.get("odoo_database_download_count", "n/a")
+            st.download_button(
+                f"Télécharger la base Odoo ({count} articles)",
+                data=st.session_state["odoo_database_download"],
+                file_name="var_articles.data",
+                mime="application/octet-stream",
+                key="download_odoo_database_data",
+            )
+
+    st.subheader("Facture fournisseur")
+    supplier_id = st.selectbox(
+        "Fournisseur de la facture",
+        list_suppliers(include_generic=False),
+        format_func=supplier_label,
+    )
     invoice_file = st.file_uploader("Facture fournisseur PDF", type=["pdf"])
 
     st.header("Conditions")
