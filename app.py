@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+import pickle
 import subprocess
 
 import pandas as pd
@@ -14,7 +15,7 @@ from invoice_price_checker.odoo_articles import (
     config_from_mapping,
     database_status,
     default_database_path,
-    refresh_articles_database,
+    fetch_articles_from_odoo,
 )
 from invoice_price_checker.odoo_update import prepare_odoo_update_rows, update_odoo_prices
 from invoice_price_checker.matching import compare_invoice_to_database
@@ -37,6 +38,12 @@ def _download_excel(df: pd.DataFrame, sheet_name: str = "price_changes") -> byte
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
         _format_workbook(writer)
+    return buffer.getvalue()
+
+
+def _download_data(df: pd.DataFrame) -> bytes:
+    buffer = BytesIO()
+    pickle.dump(df, buffer)
     return buffer.getvalue()
 
 
@@ -296,17 +303,39 @@ with st.sidebar:
         ["Base locale actuelle", "Chargement manuel"],
         disabled=not status["exists"],
     )
-    refresh_database = st.button("Charger la base articles depuis Odoo")
+    store_refreshed_database = st.checkbox(
+        "Enregistrer aussi comme base locale actuelle",
+        value=False,
+        help="Par défaut, la base Odoo est seulement préparée pour téléchargement et n'est pas écrite dans data_files.",
+    )
+    refresh_database = st.button("Préparer la base articles depuis Odoo")
     if refresh_database:
         try:
             with st.spinner("Chargement de la base articles depuis Odoo..."):
-                refreshed = refresh_articles_database(_odoo_config_from_streamlit(), data_path)
-            st.session_state["app_status_message"] = (
-                f"Chargement terminé : {len(refreshed)} articles chargés depuis Odoo."
+                refreshed = fetch_articles_from_odoo(_odoo_config_from_streamlit())
+            st.session_state["odoo_database_download"] = _download_data(refreshed)
+            st.session_state["odoo_database_download_count"] = len(refreshed)
+            st.success(
+                f"Base Odoo prête : {len(refreshed)} articles chargés. "
+                "Utilisez le bouton de téléchargement ci-dessous."
             )
-            st.rerun()
+            if store_refreshed_database:
+                data_path.parent.mkdir(parents=True, exist_ok=True)
+                with data_path.open("wb") as handle:
+                    pickle.dump(refreshed, handle)
+                st.info(f"Base enregistrée comme base locale actuelle : {data_path.name}")
         except Exception as exc:
             st.error(f"Impossible de charger la base articles depuis Odoo : {exc}")
+
+    if "odoo_database_download" in st.session_state:
+        count = st.session_state.get("odoo_database_download_count", "n/a")
+        st.download_button(
+            f"Télécharger la base Odoo ({count} articles)",
+            data=st.session_state["odoo_database_download"],
+            file_name="var_articles.data",
+            mime="application/octet-stream",
+            key="download_odoo_database_data",
+        )
 
     database_file = None
     if database_source == "Chargement manuel" or not status["exists"]:
