@@ -295,21 +295,20 @@ with st.sidebar:
     status = database_status(data_path)
     if not status["exists"]:
         st.warning(
-            "Base articles locale absente. Sur Streamlit Community Cloud, cliquez sur "
-            "Télécharger depuis Odoo avant de traiter une facture, ou chargez une base manuellement."
+            "Base articles absente. Vous pouvez cliquer pour telecharger depuis Odoo "
+            "ou charger un fichier contenant la base articles."
         )
 
     local_source = "Base locale actuelle"
     manual_source = "Chargement manuel"
     odoo_source = "Télécharger depuis Odoo"
-    database_sources = [local_source, manual_source, odoo_source]
-    database_source = st.radio(
-        "Source de la base articles",
-        database_sources,
-        index=0 if status["exists"] else 1,
-    )
+    if "database_source" not in st.session_state:
+        st.session_state["database_source"] = local_source if status["exists"] else manual_source
+    database_source = st.session_state["database_source"]
 
-    st.caption("Base locale actuelle")
+    if st.button(local_source, disabled=not status["exists"], key="select_local_database"):
+        st.session_state["database_source"] = local_source
+        database_source = local_source
     if status["exists"]:
         st.caption(f"Fichier utilisé : `{data_path.name}`")
         st.caption(f"Créée le : {_format_timestamp(status['created_at'])}")
@@ -317,15 +316,18 @@ with st.sidebar:
     else:
         st.caption("Aucune base locale disponible.")
 
-    st.caption("Chargement manuel")
+    if st.button(manual_source, key="select_manual_database"):
+        st.session_state["database_source"] = manual_source
+        database_source = manual_source
     database_file = st.file_uploader(
         "Base de données articles",
         type=["csv", "xlsx", "xls", "data"],
         disabled=database_source != manual_source,
-        label_visibility="collapsed",
     )
 
-    st.caption("Télécharger depuis Odoo")
+    if st.button(odoo_source, key="select_odoo_database"):
+        st.session_state["database_source"] = odoo_source
+        database_source = odoo_source
     store_refreshed_database = st.checkbox(
         "Enregistrer aussi comme base locale actuelle",
         value=False,
@@ -333,7 +335,7 @@ with st.sidebar:
         help="Par défaut, la base Odoo est seulement préparée pour téléchargement et n'est pas écrite dans data_files.",
     )
     refresh_database = st.button(
-        "Télécharger depuis Odoo",
+        "Charger la base articles depuis Odoo",
         disabled=database_source != odoo_source,
     )
     if refresh_database:
