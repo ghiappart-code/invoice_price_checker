@@ -305,35 +305,31 @@ with st.sidebar:
 
     database_file = None
     if database_source == local_source:
-        _, action_col = st.columns([0.08, 0.92])
-        with action_col:
-            st.caption(f"Fichier utilisé : `{data_path.name}`")
-            st.caption(f"Créée le : {_format_timestamp(status['created_at'])}")
-            st.caption(f"Modifiée le : {_format_timestamp(status['modified_at'])}")
+        st.caption(f"  Fichier utilisé : `{data_path.name}`")
+        st.caption(f"  Créée le : {_format_timestamp(status['created_at'])}")
+        st.caption(f"  Modifiée le : {_format_timestamp(status['modified_at'])}")
 
     elif database_source == manual_source:
-        _, action_col = st.columns([0.08, 0.92])
-        with action_col:
-            database_file = st.file_uploader("Base de données articles", type=["csv", "xlsx", "xls", "data"])
+        st.caption("  Sélectionnez le fichier de base articles.")
+        database_file = st.file_uploader("Base de données articles", type=["csv", "xlsx", "xls", "data"])
 
     elif database_source == odoo_source:
-        _, action_col = st.columns([0.08, 0.92])
-        with action_col:
-            refresh_database = st.button("Charger la base articles depuis Odoo")
-            if refresh_database:
-                try:
-                    with st.spinner("Chargement de la base articles depuis Odoo..."):
-                        refreshed = fetch_articles_from_odoo(_odoo_config_from_streamlit())
-                    st.session_state["odoo_database_df"] = refreshed
-                    st.session_state["odoo_database_download"] = _download_data(refreshed)
-                    st.session_state["odoo_database_download_count"] = len(refreshed)
-                    st.session_state["odoo_database_signature"] = (
-                        len(refreshed),
-                        datetime.now().isoformat(timespec="seconds"),
-                    )
-                    st.success(f"Base Odoo prête : {len(refreshed)} articles chargés.")
-                except Exception as exc:
-                    st.error(f"Impossible de charger la base articles depuis Odoo : {exc}")
+        st.caption("  Chargez la base depuis Odoo pour cette session.")
+        refresh_database = st.button("Charger la base articles depuis Odoo")
+        if refresh_database:
+            try:
+                with st.spinner("Chargement de la base articles depuis Odoo..."):
+                    refreshed = fetch_articles_from_odoo(_odoo_config_from_streamlit())
+                st.session_state["odoo_database_df"] = refreshed
+                st.session_state.pop("odoo_database_download", None)
+                st.session_state.pop("odoo_database_download_count", None)
+                st.session_state["odoo_database_signature"] = (
+                    len(refreshed),
+                    datetime.now().isoformat(timespec="seconds"),
+                )
+                st.success(f"Base Odoo prête : {len(refreshed)} articles chargés.")
+            except Exception as exc:
+                st.error(f"Impossible de charger la base articles depuis Odoo : {exc}")
 
     st.subheader("Facture fournisseur")
     supplier_id = st.selectbox(
@@ -403,6 +399,14 @@ with st.sidebar:
         st.session_state.pop("odoo_update_summary", None)
 
     with st.expander("Special dev"):
+        if "odoo_database_df" in st.session_state:
+            if st.button("Préparer une copie téléchargeable de la base", key="prepare_odoo_database_download_dev"):
+                database_df = st.session_state["odoo_database_df"]
+                st.session_state["odoo_database_download"] = _download_data(database_df)
+                st.session_state["odoo_database_download_count"] = len(database_df)
+        else:
+            st.caption("Chargez d'abord la base articles depuis Odoo pour activer le téléchargement.")
+
         if "odoo_database_download" in st.session_state:
             count = st.session_state.get("odoo_database_download_count", "n/a")
             st.download_button(
@@ -412,8 +416,6 @@ with st.sidebar:
                 mime="application/octet-stream",
                 key="download_odoo_database_data_dev",
             )
-        else:
-            st.caption("Chargez d'abord la base articles depuis Odoo pour activer le téléchargement.")
 
 
 if not invoice_file:
