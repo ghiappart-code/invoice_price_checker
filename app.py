@@ -495,12 +495,17 @@ workbook_sheets = {
     "all_checked": result,
 }
 
-st.download_button(
-    "Download complete review workbook",
-    data=_download_workbook(workbook_sheets),
-    file_name=f"{invoice_stem}_price_review.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
+if st.button("Prepare complete review workbook"):
+    with st.spinner("Preparing workbook..."):
+        st.session_state[f"review_workbook_{invoice_stem}"] = _download_workbook(workbook_sheets)
+
+if workbook_data := st.session_state.get(f"review_workbook_{invoice_stem}"):
+    st.download_button(
+        "Download complete review workbook",
+        data=workbook_data,
+        file_name=f"{invoice_stem}_price_review.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 tab_all, tab_changed, tab_update, tab_unmatched, tab_abnormal, tab_blocked = st.tabs(
     [
