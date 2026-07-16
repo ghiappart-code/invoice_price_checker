@@ -14,6 +14,7 @@ from invoice_price_checker.text import parse_decimal
 class RelaisVertParser(SupplierInvoiceParser):
     supplier_code = "254"
     display_name = "RELAIS VERT"
+    PRODUCT_AREA_Y_MIN = 280
 
     def parse(self, file: BinaryIO) -> ParsedInvoice:
         import fitz
@@ -50,7 +51,7 @@ class RelaisVertParser(SupplierInvoiceParser):
         words = [
             (x0, y0, x1, y1, text)
             for x0, y0, x1, y1, text, *_ in page.get_text("words")
-            if 280 <= y0 <= 780
+            if self.PRODUCT_AREA_Y_MIN <= y0 <= 780
         ]
         words.sort(key=lambda item: (item[1], item[0]))
 

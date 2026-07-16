@@ -2,6 +2,7 @@ from invoice_price_checker.suppliers import detect_supplier_from_text, list_supp
 from invoice_price_checker.suppliers.agidra import AgidraParser
 from invoice_price_checker.suppliers.ecodis import EcodisParser
 from invoice_price_checker.suppliers.ekibio import EKIBIO_ENERGY_TRANSPORT_SURCHARGE_RATE, EkibioParser
+from invoice_price_checker.suppliers.halle_bio_occitanie import HalleBioOccitanieParser
 from invoice_price_checker.suppliers.relais_vert import RelaisVertParser
 
 
@@ -132,6 +133,36 @@ def test_relais_vert_proposes_unit_ratio_override_when_net_price_already_matches
     assert row["unit_price"] == 10.99
     assert row["line_amount"] == 274.75
     assert row["supplier_unit_ratio_override_when_abnormal"] == 1.0
+
+
+def test_halle_bio_occitanie_reads_product_line_above_relais_vert_default_area():
+    class Page:
+        def get_text(self, mode):
+            assert mode == "words"
+            return [
+                (40.0, 267.0, 62.0, 276.0, "E980"),
+                (90.0, 267.0, 130.0, 276.0, "CORDONS"),
+                (132.0, 267.0, 166.0, 276.0, "BLEUS"),
+                (168.0, 267.0, 205.0, 276.0, "(200G)"),
+                (207.0, 267.0, 235.0, 276.0, "ELIBIO"),
+                (237.0, 267.0, 255.0, 276.0, "-"),
+                (90.0, 276.0, 130.0, 285.0, "EPICIERS"),
+                (132.0, 276.0, 150.0, 285.0, "BIO"),
+                (365.0, 267.0, 376.0, 276.0, "2"),
+                (395.0, 267.0, 410.0, 276.0, "5,00"),
+                (485.0, 267.0, 500.0, 276.0, "4,50"),
+                (518.0, 267.0, 540.0, 276.0, "9,00"),
+            ]
+
+    assert RelaisVertParser()._parse_page(Page(), 1, 0.0) == []
+
+    lines = HalleBioOccitanieParser()._parse_page(Page(), 1, 0.0)
+
+    assert len(lines) == 1
+    assert lines[0]["supplier_article_code"] == "E980"
+    assert lines[0]["description"] == "CORDONS BLEUS (200G) ELIBIO - EPICIERS BIO"
+    assert lines[0]["quantity"] == 2
+    assert lines[0]["unit_price"] == 4.50
 
 
 def test_ekibio_detects_energy_transport_surcharge():
