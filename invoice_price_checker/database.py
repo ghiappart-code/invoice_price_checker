@@ -18,7 +18,6 @@ REQUIRED_COLUMNS = {
 
 COLUMN_ALIASES = {
     "id": "article_code",
-    "id_externe": "external_id",
     "article": "article_code",
     "code_article": "article_code",
     "reference_article": "article_code",
@@ -40,7 +39,9 @@ COLUMN_ALIASES = {
     "taxes_à_la_vente/montant": "tax_rate",
     "taxes_a_la_vente/montant": "tax_rate",
     "catégorie_de_marge/nom": "margin_category",
+    "catégorie_de_marge/markup": "margin_markup",
     "categorie_de_marge/nom": "margin_category",
+    "categorie_de_marge/markup": "margin_markup",
     "coût": "current_price",
     "cout": "current_price",
     "prix": "current_price",
@@ -80,7 +81,6 @@ def normalize_product_database(df: pd.DataFrame) -> pd.DataFrame:
     df = _coalesce_duplicate_columns(df)
     for column in [
         "article_code",
-        "external_id",
         "supplier_code",
         "supplier_article_code",
         "description",
@@ -100,6 +100,8 @@ def normalize_product_database(df: pd.DataFrame) -> pd.DataFrame:
         df["tax_rate"] = 0.0
     if "margin_category" not in df:
         df["margin_category"] = ""
+    if "margin_markup" in df:
+        df["margin_markup"] = pd.to_numeric(df["margin_markup"], errors="coerce")
     if "supplier_unit_ratio" in df:
         df["supplier_unit_ratio"] = pd.to_numeric(df["supplier_unit_ratio"], errors="coerce").fillna(1.0)
         df.loc[df["supplier_unit_ratio"] == 0, "supplier_unit_ratio"] = 1.0
@@ -115,8 +117,6 @@ def normalize_product_database(df: pd.DataFrame) -> pd.DataFrame:
         df = df[~category_key.isin(fruit_veg_keys)].copy()
     if "currency" not in df:
         df["currency"] = "EUR"
-    if "external_id" not in df:
-        df["external_id"] = ""
     df["supplier_article_key"] = df.get("supplier_article_code", "").map(normalize_key)
     df["description_key"] = df.get("description", "").map(normalize_key)
     return df

@@ -5,6 +5,8 @@ import re
 import pandas as pd
 
 
+# Legacy fallback for old local/manual databases that do not include Odoo's
+# product.margin.classification markup value.
 MARGIN_RATES = {
     "Taux de marque 15%": 17.6471,
     "Taux de marque 21%": 27.1941,
@@ -20,13 +22,27 @@ MARGIN_RATES = {
     "Taux de marque 25%-Consigne 3€": 34.1382,
 }
 
+# Temporary v16 migration aliases.
+# Remove this block once Odoo test data has been cleaned so these categories no
+# longer appear; they are mapped to the historical v12/v16 "Taux de marque"
+# categories to keep update review generation working during migration tests.
+TEMPORARY_V16_MARGIN_ALIASES = {
+    "21\u202f% de marge sur cout": "Taux de marque 21%",
+    "25\u202f% de marge sur cout": "Taux de marque 25%",
+}
+
 UNKNOWN_MARGIN_MESSAGE = "Vérifier que le dict des catégories de marge est à jour"
 
 
-def sale_price(cost: object, tax_rate: object, margin_category: object) -> float | str:
+def sale_price(
+    cost: object,
+    tax_rate: object,
+    margin_category: object,
+    margin_markup: object = None,
+) -> float | str:
     try:
         margin_text = str(margin_category)
-        margin_rate = MARGIN_RATES[margin_text]
+        margin_rate = _margin_rate(margin_text, margin_markup)
         numeric_cost = float(cost)
         numeric_tax_rate = 0.0 if pd.isna(tax_rate) else float(tax_rate)
         price = numeric_cost * (1 + margin_rate / 100) * (1 + numeric_tax_rate / 100)
@@ -35,6 +51,15 @@ def sale_price(cost: object, tax_rate: object, margin_category: object) -> float
         return round(price, 2)
     except Exception:
         return UNKNOWN_MARGIN_MESSAGE
+
+
+def _margin_rate(margin_text: str, margin_markup: object) -> float:
+    # Prefer the live Odoo markup extracted into the article database. The name
+    # mapping below is only a migration fallback for older databases.
+    if margin_markup is not None and not pd.isna(margin_markup):
+        return float(margin_markup)
+    margin_text = TEMPORARY_V16_MARGIN_ALIASES.get(margin_text, margin_text)
+    return MARGIN_RATES[margin_text]
 
 
 def _deposit_value(margin_category: str) -> float:

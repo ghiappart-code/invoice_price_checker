@@ -20,6 +20,8 @@ class OdooConfig:
     database: str
     username: str
     password: str
+    timeout: int = 300
+    batch_size: int = 500
 
 
 def default_database_path() -> Path:
@@ -60,6 +62,8 @@ def config_from_env() -> OdooConfig:
         database=os.environ["ODOO_DATABASE"],
         username=os.environ["ODOO_USERNAME"],
         password=os.environ["ODOO_PASSWORD"],
+        timeout=int(os.getenv("ODOO_TIMEOUT", "300")),
+        batch_size=int(os.getenv("ODOO_BATCH_SIZE", "500")),
     )
 
 
@@ -70,6 +74,8 @@ def config_from_mapping(values: dict[str, Any]) -> OdooConfig:
         database=str(values["database"]),
         username=str(values["username"]),
         password=str(values["password"]),
+        timeout=int(values.get("timeout", 300)),
+        batch_size=int(values.get("batch_size", 500)),
     )
 
 
@@ -87,11 +93,12 @@ def refresh_articles_database(
 def fetch_articles_from_odoo(config: OdooConfig) -> pd.DataFrame:
     import odoorpc
 
-    odoo = odoorpc.ODOO(config.url, port=config.port, protocol="jsonrpc+ssl")
+    odoo = odoorpc.ODOO(config.url, port=config.port, protocol="jsonrpc+ssl", timeout=config.timeout)
     odoo.login(config.database, config.username, config.password)
 
     Product = odoo.env["product.product"]
-    articles_data = Product.search_read(
+    articles_data = _search_read_all(
+        Product,
         [("active", "=", True)],
         [
             "id",
@@ -103,42 +110,32 @@ def fetch_articles_from_odoo(config: OdooConfig) -> pd.DataFrame:
             "product_tmpl_id",
             "margin_classification_id",
         ],
+        batch_size=config.batch_size,
     )
     df_articles = pd.DataFrame(articles_data)
-
-    IrModelData = odoo.env["ir.model.data"]
-    external_ids_data = IrModelData.search_read(
-        [("model", "=", "product.product")],
-        ["res_id", "complete_name"],
-    )
-    df_external_ids = pd.DataFrame(external_ids_data)
-    if not df_external_ids.empty:
-        df_external_ids = df_external_ids.rename(columns={"complete_name": "external_id"})
-        df_articles = df_articles.merge(
-            df_external_ids[["res_id", "external_id"]],
-            left_on="id",
-            right_on="res_id",
-            how="left",
-        )
-    else:
-        df_articles["external_id"] = None
 
     df_articles["template_id"] = df_articles["product_tmpl_id"].apply(_relation_id)
     df_articles["categ_id_only"] = df_articles["categ_id"].apply(_relation_id)
     df_articles["marge_nom"] = df_articles["margin_classification_id"].apply(_relation_name)
+    df_articles["marge_markup"] = df_articles["margin_classification_id"].apply(
+        _relation_id
+    ).map(margin_markup_by_id(Product, odoo, df_articles, config.batch_size))
 
     SupplierInfo = odoo.env["product.supplierinfo"]
-    fournisseurs_data = SupplierInfo.search_read(
+    supplier_partner_field = supplierinfo_partner_field(SupplierInfo)
+    fournisseurs_data = _search_read_all(
+        SupplierInfo,
         [],
         [
             "id",
             "product_tmpl_id",
             "product_id",
-            "name",
+            supplier_partner_field,
             "product_code",
             "price",
             "product_uom",
         ],
+        batch_size=config.batch_size,
     )
     df_fournisseurs = pd.DataFrame(fournisseurs_data)
     if df_fournisseurs.empty:
@@ -146,8 +143,8 @@ def fetch_articles_from_odoo(config: OdooConfig) -> pd.DataFrame:
             columns=["template_id", "product_code", "price", "supplier_id", "supplier_name", "uom_id", "uom_name"]
         )
     else:
-        df_fournisseurs["supplier_id"] = df_fournisseurs["name"].apply(_relation_id)
-        df_fournisseurs["supplier_name"] = df_fournisseurs["name"].apply(_relation_name)
+        df_fournisseurs["supplier_id"] = df_fournisseurs[supplier_partner_field].apply(_relation_id)
+        df_fournisseurs["supplier_name"] = df_fournisseurs[supplier_partner_field].apply(_relation_name)
         df_fournisseurs["uom_id"] = df_fournisseurs["product_uom"].apply(_relation_id)
         df_fournisseurs["uom_name"] = df_fournisseurs["product_uom"].apply(_relation_name)
         df_fournisseurs["template_id"] = df_fournisseurs["product_tmpl_id"].apply(_relation_id)
@@ -155,7 +152,12 @@ def fetch_articles_from_odoo(config: OdooConfig) -> pd.DataFrame:
     uom_ids = df_fournisseurs["uom_id"].dropna().unique().tolist()
     if uom_ids:
         Uom = odoo.env["uom.uom"]
-        uom_data = Uom.search_read([("id", "in", uom_ids)], ["id", "name", "factor"])
+        uom_data = _search_read_all(
+            Uom,
+            [("id", "in", uom_ids)],
+            ["id", "name", "factor"],
+            batch_size=config.batch_size,
+        )
         df_uom = pd.DataFrame(uom_data).rename(columns={"factor": "uom_ratio"})
     else:
         df_uom = pd.DataFrame(columns=["id", "uom_ratio"])
@@ -167,7 +169,12 @@ def fetch_articles_from_odoo(config: OdooConfig) -> pd.DataFrame:
     unique_tax_ids = list(set(all_tax_ids))
     if unique_tax_ids:
         Tax = odoo.env["account.tax"]
-        tax_data = Tax.search_read([("id", "in", unique_tax_ids)], ["id", "name", "amount"])
+        tax_data = _search_read_all(
+            Tax,
+            [("id", "in", unique_tax_ids)],
+            ["id", "name", "amount"],
+            batch_size=config.batch_size,
+        )
         df_taxes = pd.DataFrame(tax_data)
     else:
         df_taxes = pd.DataFrame(columns=["id", "amount"])
@@ -175,7 +182,12 @@ def fetch_articles_from_odoo(config: OdooConfig) -> pd.DataFrame:
     categ_ids = df_articles["categ_id_only"].dropna().unique().tolist()
     if categ_ids:
         Category = odoo.env["product.category"]
-        categ_data = Category.search_read([("id", "in", categ_ids)], ["id", "name", "parent_id"])
+        categ_data = _search_read_all(
+            Category,
+            [("id", "in", categ_ids)],
+            ["id", "name", "parent_id"],
+            batch_size=config.batch_size,
+        )
         df_categories = pd.DataFrame(categ_data)
         df_categories["parent_name"] = df_categories["parent_id"].apply(_relation_name)
     else:
@@ -213,7 +225,6 @@ def fetch_articles_from_odoo(config: OdooConfig) -> pd.DataFrame:
     ).rename(columns={"amount": "tax_amount"})
 
     column_mapping = {
-        "external_id": "ID Externe",
         "id": "id",
         "name": "Nom",
         "supplier_id": "Fournisseurs/ID",
@@ -224,11 +235,113 @@ def fetch_articles_from_odoo(config: OdooConfig) -> pd.DataFrame:
         "uom_ratio": "Fournisseurs/Unité de mesure/Ratio",
         "tax_amount": "Taxes à la vente/Montant",
         "marge_nom": "Catégorie de marge/Nom",
+        "marge_markup": "Catégorie de marge/Markup",
         "barcode": "Code Barre",
         "categorie_mere": "Catégorie d'article/Catégorie mère/Nom",
     }
     df_final = df_final.rename(columns=column_mapping)
     return df_final[[col for col in column_mapping.values()]]
+
+
+def margin_markup_by_id(Product: Any, odoo: Any, df_articles: pd.DataFrame, batch_size: int) -> dict[int, float]:
+    """Return Odoo product.margin.classification markup values keyed by classification id."""
+    try:
+        product_fields = Product.fields_get(["margin_classification_id"])
+        relation_model = product_fields.get("margin_classification_id", {}).get("relation")
+        if not relation_model:
+            return {}
+
+        margin_ids = sorted(
+            {
+                value
+                for value in df_articles["margin_classification_id"].map(_relation_id).dropna().tolist()
+                if value
+            }
+        )
+        if not margin_ids:
+            return {}
+
+        Margin = odoo.env[relation_model]
+        if "markup" not in _model_field_names(Margin):
+            return {}
+
+        rows = _search_read_all(
+            Margin,
+            [("id", "in", margin_ids)],
+            ["id", "markup"],
+            batch_size=min(batch_size, 100),
+        )
+        return {
+            int(row["id"]): float(row["markup"])
+            for row in rows
+            if row.get("id") is not None and row.get("markup") is not None
+        }
+    except Exception:
+        return {}
+
+
+def supplierinfo_partner_field(model: Any) -> str:
+    fields = _model_field_names(model)
+    for field in ["partner_id", "name"]:
+        if field in fields:
+            return field
+    raise ValueError("product.supplierinfo has neither partner_id nor name supplier field")
+
+
+def _search_read_all(
+    model: Any,
+    domain: list[Any],
+    fields: list[str],
+    *,
+    batch_size: int,
+    skip_failed_batches: bool = False,
+) -> list[dict[str, Any]]:
+    if batch_size <= 0:
+        raise ValueError("Odoo batch_size must be greater than zero")
+
+    rows: list[dict[str, Any]] = []
+    ids = model.search(domain)
+    for offset in range(0, len(ids), batch_size):
+        batch_ids = ids[offset : offset + batch_size]
+        try:
+            batch = _read_with_retry(
+                model,
+                batch_ids,
+                fields,
+                attempts=1 if skip_failed_batches else 2,
+            )
+        except Exception:
+            if skip_failed_batches:
+                continue
+            raise
+        rows.extend(batch)
+    return rows
+
+
+def _model_field_names(model: Any) -> set[str]:
+    try:
+        fields_metadata = model.fields_get()
+    except TypeError:
+        fields_metadata = model.fields_get([])
+    return set(fields_metadata)
+
+
+def _read_with_retry(
+    model: Any,
+    ids: list[int],
+    fields: list[str],
+    *,
+    attempts: int = 2,
+) -> list[dict[str, Any]]:
+    last_error: Exception | None = None
+    for _ in range(attempts):
+        try:
+            return model.read(ids, fields)
+        except Exception as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    return []
 
 
 def _relation_id(value: object) -> int | None:

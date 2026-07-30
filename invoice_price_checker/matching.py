@@ -28,17 +28,16 @@ INTERNAL_OUTPUT_COLUMNS = [
     "remise_detail",
     "tax_rate",
     "margin_category",
+    "margin_markup",
     "currency",
     "matched",
     "match_method",
-    "external_id",
     "database_description",
 ]
 
 
 OUTPUT_COLUMN_RENAMES = {
     "article_code": "Article_Ref_EAN",
-    "external_id": "ID_externe",
     "supplier_code": "ID_Fournisseur",
     "supplier_article_code": "Article_ID_Fournisseur",
     "database_description": "DB_Designation",
@@ -57,6 +56,7 @@ OUTPUT_COLUMN_RENAMES = {
     "remise_detail": "Detail_Remise",
     "tax_rate": "TVA",
     "margin_category": "Taux_de_Marque",
+    "margin_markup": "Taux_de_Marque_Markup",
     "currency": "Monnaie",
     "matched": "Match_Fact_DB",
     "match_method": "Match_Methode",
@@ -211,10 +211,10 @@ def _match_line(
         comparison_price,
         product.get("tax_rate"),
         product.get("margin_category"),
+        product.get("margin_markup"),
     )
 
     return {
-        "external_id": product.get("external_id"),
         "article_code": product["article_code"],
         "supplier_code": product["supplier_code"],
         "supplier_article_code": product["supplier_article_code"],
@@ -229,6 +229,7 @@ def _match_line(
         "price_change_pct": pct,
         "tax_rate": _numeric_or_zero(product.get("tax_rate")),
         "margin_category": product.get("margin_category"),
+        "margin_markup": product.get("margin_markup"),
         "prix_de_vente": price_for_sale,
         "currency": line.get("currency") or product.get("currency"),
         "remise_temp": remise_temp,
@@ -249,7 +250,6 @@ def _match_line(
 
 def _unmatched_row(line: pd.Series) -> dict[str, object]:
     return {
-        "external_id": None,
         "article_code": None,
         "supplier_code": None,
         "supplier_article_code": line["supplier_article_code"],
@@ -264,6 +264,7 @@ def _unmatched_row(line: pd.Series) -> dict[str, object]:
         "price_change_pct": None,
         "tax_rate": None,
         "margin_category": None,
+        "margin_markup": None,
         "prix_de_vente": None,
         "currency": line.get("currency"),
         "remise_temp": int(_numeric_or_zero(line.get("remise_temp"))),

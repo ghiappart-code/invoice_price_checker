@@ -4,6 +4,7 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 import pickle
+import os
 import subprocess
 
 import pandas as pd
@@ -17,7 +18,7 @@ from invoice_price_checker.odoo_articles import (
     default_database_path,
     fetch_articles_from_odoo,
 )
-from invoice_price_checker.odoo_update import prepare_odoo_update_rows, update_odoo_prices
+from invoice_price_checker.odoo_update import dry_run_odoo_price_updates, prepare_odoo_update_rows, update_odoo_prices
 from invoice_price_checker.matching import compare_invoice_to_database
 from invoice_price_checker.models import MatchConfig
 from invoice_price_checker.suppliers import detect_supplier_from_text, get_parser, list_suppliers, supplier_label
@@ -95,10 +96,10 @@ def _calculation_notes() -> pd.DataFrame:
             {"column": "Detail_Remise", "calculation": "Human-readable source of remise_temp, for example Q*=12 or E=4."},
             {"column": "TVA", "calculation": "Sales tax rate from the database, used to compute prix_de_vente."},
             {"column": "Taux_de_Marque", "calculation": "Margin category from the database, used to compute prix_de_vente."},
+            {"column": "Taux_de_Marque_Markup", "calculation": "Markup value read from Odoo product.margin.classification and used before the legacy hardcoded fallback."},
             {"column": "Monnaie", "calculation": "Invoice or database currency."},
             {"column": "Match_Fact_DB", "calculation": "TRUE when the invoice line was matched to a database article."},
             {"column": "Match_Methode", "calculation": "Matching method used, for example supplier article code or description fallback."},
-            {"column": "ID_externe", "calculation": "Odoo external ID from the database, kept at the end because it is mainly used for technical checks."},
             {"column": "DB_Designation", "calculation": "Product designation from the database, kept at the end for traceability."},
             {"column": "Coût / Fournisseurs/Prix", "calculation": "For Odoo update review: Coût = Fact_PU_unitaire; Fournisseurs/Prix = Fact_PU_Net_GZ."},
         ]
@@ -153,6 +154,31 @@ def _uploaded_file_signature(uploaded_file) -> tuple[str, int] | None:
     )
 
 
+def _database_ready_message(
+    database_source: str,
+    local_source: str,
+    manual_source: str,
+    odoo_source: str,
+    status: dict,
+    database_file,
+) -> str:
+    if database_source == local_source and status["exists"]:
+        return f"La base articles locale est disponible : `{status['path'].name}`."
+    if database_source == manual_source and database_file is not None:
+        return f"La base articles manuelle est chargée : `{database_file.name}`."
+    if database_source == odoo_source and "odoo_database_df" in st.session_state:
+        count = st.session_state.get("odoo_database_download_count", len(st.session_state["odoo_database_df"]))
+        database_name = st.session_state.get("odoo_database_name", _odoo_database_name())
+        return f"La base articles Odoo `{database_name}` est chargée avec {count} articles."
+    return "La base articles n'est pas encore prête."
+
+
+def _invoice_ready_message(invoice_file) -> str:
+    if invoice_file is None:
+        return "Ajoutez une facture PDF."
+    return f"La facture PDF `{invoice_file.name}` est prête à être analysée."
+
+
 def _analysis_signature(
     invoice_file,
     database_file,
@@ -201,6 +227,21 @@ def _odoo_config_from_streamlit():
     return config_from_env()
 
 
+def _odoo_database_name() -> str:
+    try:
+        return _odoo_config_from_streamlit().database
+    except Exception:
+        return "n/a"
+
+
+def _developer_tools_enabled() -> bool:
+    if os.getenv("INVOICE_PRICE_CHECKER_DEV_TOOLS", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    if "app" in st.secrets:
+        return bool(st.secrets["app"].get("developer_tools", False))
+    return False
+
+
 def _validate_invoice_supplier(uploaded_file, selected_supplier_id: str) -> None:
     try:
         text = extract_pdf_text(uploaded_file)
@@ -237,6 +278,44 @@ def _render_odoo_update_controls(odoo_update_rows: pd.DataFrame, invoice_stem: s
         "Review the workbook or the Odoo update tab before applying changes."
     )
     update_report_displayed = False
+    preflight_report_displayed = False
+    if _developer_tools_enabled():
+        if st.button("Verify Odoo update without writing", key=f"dry_run_odoo_prices_{invoice_stem}"):
+            try:
+                with st.spinner("Checking Odoo update rows without writing..."):
+                    summary = dry_run_odoo_price_updates(odoo_update_rows, _odoo_config_from_streamlit())
+                st.session_state["odoo_preflight_summary"] = summary
+                st.success(
+                    f"Dry run finished: {summary.success} ready, "
+                    f"{summary.warnings} warning, {summary.errors} error."
+                )
+                st.dataframe(summary.results, use_container_width=True, hide_index=True)
+                st.download_button(
+                    "Download Odoo dry run report CSV",
+                    data=_download_csv(summary.results),
+                    file_name="odoo_price_update_dry_run_report.csv",
+                    mime="text/csv",
+                    key=f"download_odoo_dry_run_report_{invoice_stem}",
+                )
+                preflight_report_displayed = True
+            except Exception as exc:
+                st.error(f"Could not verify Odoo update rows: {exc}")
+
+    stored_preflight = st.session_state.get("odoo_preflight_summary")
+    if _developer_tools_enabled() and stored_preflight is not None and not preflight_report_displayed:
+        st.info(
+            f"Last Odoo dry run report: {stored_preflight.success} ready, "
+            f"{stored_preflight.warnings} warning, {stored_preflight.errors} error."
+        )
+        st.dataframe(stored_preflight.results, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download last Odoo dry run report CSV",
+            data=_download_csv(stored_preflight.results),
+            file_name="odoo_price_update_dry_run_report.csv",
+            mime="text/csv",
+            key=f"download_last_odoo_dry_run_report_{invoice_stem}",
+        )
+
     confirmation = st.checkbox(
         "I have reviewed the rows above and I want to update Odoo prices",
         key=f"confirm_odoo_update_{invoice_stem}",
@@ -296,11 +375,13 @@ with st.sidebar:
     local_source = "Utiliser la base locale actuelle"
     manual_source = "Chargement manuel"
     odoo_source = "Télécharger depuis Odoo"
-    database_sources = [local_source, manual_source, odoo_source]
+    database_sources = [manual_source, odoo_source]
+    if status["exists"]:
+        database_sources.insert(0, local_source)
     database_source = st.radio(
         "Action sur la base articles",
         database_sources,
-        index=0 if status["exists"] else 1,
+        index=0,
     )
 
     database_file = None
@@ -316,11 +397,8 @@ with st.sidebar:
         database_file = st.file_uploader("Base de données articles", type=["csv", "xlsx", "xls", "data"])
 
     elif database_source == odoo_source:
-        store_refreshed_database = st.checkbox(
-            "Enregistrer aussi comme base locale actuelle",
-            value=False,
-            help="Par défaut, la base Odoo est seulement préparée pour téléchargement et n'est pas écrite dans data_files.",
-        )
+        odoo_database_name = _odoo_database_name()
+        st.caption(f"Base Odoo configurée : `{odoo_database_name}`")
         refresh_database = st.button("Charger la base articles depuis Odoo")
         if refresh_database:
             try:
@@ -329,26 +407,34 @@ with st.sidebar:
                 st.session_state["odoo_database_df"] = refreshed
                 st.session_state["odoo_database_download"] = _download_data(refreshed)
                 st.session_state["odoo_database_download_count"] = len(refreshed)
+                st.session_state["odoo_database_name"] = odoo_database_name
                 st.session_state["odoo_database_signature"] = (
+                    odoo_database_name,
                     len(refreshed),
                     datetime.now().isoformat(timespec="seconds"),
                 )
                 st.success(
-                    f"Base Odoo prête : {len(refreshed)} articles chargés. "
-                    "Vous pouvez l'utiliser pour l'analyse ou la télécharger ci-dessous."
+                    f"Base Odoo `{odoo_database_name}` prête : {len(refreshed)} articles chargés. "
+                    "Vous pouvez l'utiliser pour l'analyse."
                 )
-                if store_refreshed_database:
-                    data_path.parent.mkdir(parents=True, exist_ok=True)
-                    with data_path.open("wb") as handle:
-                        pickle.dump(refreshed, handle)
-                    st.info(f"Base enregistrée comme base locale actuelle : {data_path.name}")
             except Exception as exc:
                 st.error(f"Impossible de charger la base articles depuis Odoo : {exc}")
 
-        if "odoo_database_download" in st.session_state:
+        if _developer_tools_enabled() and "odoo_database_download" in st.session_state:
+            st.caption("Outils développeur")
+            if st.button(
+                f"Enregistrer la base dans `{data_path.parent.name}/{data_path.name}`",
+                key="save_odoo_database_to_local_data_files",
+                help="Écrit la base Odoo chargée dans data_files/var_articles.data pour l'utiliser ensuite comme base locale actuelle.",
+            ):
+                data_path.parent.mkdir(parents=True, exist_ok=True)
+                with data_path.open("wb") as handle:
+                    pickle.dump(st.session_state["odoo_database_df"], handle)
+                st.info(f"Base enregistrée dans `{data_path.parent.name}/{data_path.name}`.")
+
             count = st.session_state.get("odoo_database_download_count", "n/a")
             st.download_button(
-                f"Télécharger la base Odoo ({count} articles)",
+                f"Télécharger la base dans `Downloads` ({count} articles)",
                 data=st.session_state["odoo_database_download"],
                 file_name="var_articles.data",
                 mime="application/octet-stream",
@@ -409,6 +495,7 @@ with st.sidebar:
         st.session_state["analysis_started"] = False
         st.session_state["analysis_signature"] = current_analysis_signature
         st.session_state.pop("odoo_update_summary", None)
+        st.session_state.pop("odoo_preflight_summary", None)
 
     launch_analysis = st.button(
         "Lancer l'analyse",
@@ -418,17 +505,21 @@ with st.sidebar:
     if launch_analysis:
         st.session_state["analysis_started"] = True
         st.session_state.pop("odoo_update_summary", None)
+        st.session_state.pop("odoo_preflight_summary", None)
 
 
 if not invoice_file:
-    if analysis_disabled:
-        st.info("Choisissez une source de base articles disponible, puis ajoutez une facture PDF.")
-    else:
-        st.info("Téléchargez la facture à traiter.")
+    st.info(_database_ready_message(database_source, local_source, manual_source, odoo_source, status, database_file))
+    st.info(_invoice_ready_message(invoice_file))
     st.stop()
 
 if not st.session_state.get("analysis_started", False):
-    st.info("Choisissez la facture, la base articles et le fournisseur, puis cliquez sur Lancer l'analyse.")
+    st.info(_database_ready_message(database_source, local_source, manual_source, odoo_source, status, database_file))
+    st.info(_invoice_ready_message(invoice_file))
+    if analysis_disabled:
+        st.info("Complétez les éléments manquants pour lancer l'analyse.")
+    else:
+        st.info("Cliquez sur Lancer l'analyse pour démarrer le contrôle.")
     st.stop()
 
 _validate_invoice_supplier(invoice_file, supplier_id)

@@ -1,13 +1,12 @@
 import pandas as pd
 
-from invoice_price_checker.odoo_update import prepare_odoo_update_rows
+from invoice_price_checker.odoo_update import _relation_or_scalar_id, prepare_odoo_update_rows
 
 
 def test_prepare_odoo_update_rows_excludes_unchanged_prices():
     rows = pd.DataFrame(
         [
             {
-                "ID_externe": "changed",
                 "Article_Ref_EAN": "1",
                 "ID_Fournisseur": "254",
                 "Fact_PU_unitaire": 2.5,
@@ -19,7 +18,6 @@ def test_prepare_odoo_update_rows_excludes_unchanged_prices():
                 "Blocage_Modif": False,
             },
             {
-                "ID_externe": "unchanged",
                 "Article_Ref_EAN": "2",
                 "ID_Fournisseur": "254",
                 "Fact_PU_unitaire": 2.0,
@@ -36,6 +34,12 @@ def test_prepare_odoo_update_rows_excludes_unchanged_prices():
     result = prepare_odoo_update_rows(rows)
 
     assert len(result) == 1
-    assert result.loc[0, "ID Externe"] == "changed"
+    assert "ID Externe" not in result.columns
     assert result.loc[0, "Coût"] == 2.5
     assert result.loc[0, "Fournisseurs/Prix"] == 7.5
+
+
+def test_relation_or_scalar_id_handles_many2one_and_scalar_values():
+    assert _relation_or_scalar_id([42, "Product Template"]) == 42
+    assert _relation_or_scalar_id("42") == 42
+    assert _relation_or_scalar_id(None) is None
