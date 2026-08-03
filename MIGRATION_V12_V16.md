@@ -154,13 +154,30 @@ Objectif :
 
 Activation :
 
-- variable d'environnement `INVOICE_PRICE_CHECKER_DEV_TOOLS=1` ;
-- ou configuration Streamlit :
+- lancement ponctuel en local :
+
+```bash
+INVOICE_PRICE_CHECKER_DEV_TOOLS=1 streamlit run app.py
+```
+
+- variable d'environnement persistante dans le shell courant :
+
+```bash
+export INVOICE_PRICE_CHECKER_DEV_TOOLS=1
+streamlit run app.py
+```
+
+- valeurs acceptees pour la variable d'environnement :
+  `1`, `true`, `yes`, `on` ;
+- ou configuration Streamlit persistante dans `.streamlit/secrets.toml` :
 
 ```toml
 [app]
 developer_tools = true
 ```
+
+- pour desactiver le mode developpeur, retirer la variable d'environnement ou
+  remettre `developer_tools = false`.
 
 Outils visibles en mode developpeur :
 
