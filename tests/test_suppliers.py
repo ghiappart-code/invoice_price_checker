@@ -225,6 +225,9 @@ def test_agidra_stops_product_at_large_vertical_gap():
 def test_agidra_keeps_words_from_top_and_bottom_of_continuation_pages():
     parser = AgidraParser()
     words = [
+        (107.2, 9.6, 129.7, 17.2, "145004", 0, 0, 0),
+        (148.5, 9.6, 159.3, 17.2, "RIZ", 0, 0, 0),
+        (519.5, 9.6, 540.1, 17.2, "1,42", 0, 0, 0),
         (115.0, 44.0, 135.0, 52.0, "179005", 0, 0, 0),
         (156.0, 44.5, 190.0, 52.5, "MOUTARDE", 0, 0, 0),
         (483.0, 44.0, 495.0, 52.0, "1,20", 0, 0, 0),
@@ -235,7 +238,7 @@ def test_agidra_keeps_words_from_top_and_bottom_of_continuation_pages():
 
     lines = parser._group_words_by_line(words)
 
-    assert [parser._reference_from_items(line) for line in lines] == ["179005", "177603"]
+    assert [parser._reference_from_items(line) for line in lines] == ["145004", "179005", "177603"]
 
 
 def test_agidra_separates_description_from_fc_brand():
@@ -261,6 +264,33 @@ def test_agidra_separates_description_from_fc_brand():
 def test_agidra_separates_description_from_fw_customs_columns():
     parser = AgidraParser()
     block = [
+        (107.2, 300.0, 135.0, 308.0, "809000"),
+        (156.0, 300.5, 190.0, 308.5, "BOISSON"),
+        (192.0, 300.5, 230.0, 308.5, "VEGETALE"),
+        (294.0, 300.0, 303.0, 308.0, "IT"),
+        (312.0, 300.0, 340.0, 308.0, "22029915"),
+        (411.2, 300.0, 428.0, 308.0, "12,00"),
+        (442.8, 300.0, 463.4, 308.0, "1,68"),
+        (519.5, 300.0, 540.1, 308.0, "1,68"),
+        (558.7, 300.0, 575.5, 308.0, "20,16"),
+        (586.1, 300.0, 599.2, 308.0, "5,50"),
+    ]
+
+    row = parser._row_from_block("809000", block, 1, "fw_customs")
+
+    assert row["description"] == "BOISSON VEGETALE"
+    assert row["origin"] == "IT"
+    assert row["customs_reference"] == "22029915"
+    assert row["quantity"] == 12.0
+    assert row["gross_unit_price"] == 1.68
+    assert row["unit_price"] == 1.68
+    assert row["line_amount"] == 20.16
+    assert row["vat_code"] == "5,50"
+
+
+def test_agidra_keeps_legacy_fw_customs_price_bands():
+    parser = AgidraParser()
+    block = [
         (115.0, 300.0, 135.0, 308.0, "809000"),
         (156.0, 300.5, 190.0, 308.5, "BOISSON"),
         (192.0, 300.5, 230.0, 308.5, "VEGETALE"),
@@ -274,6 +304,6 @@ def test_agidra_separates_description_from_fw_customs_columns():
 
     row = parser._row_from_block("809000", block, 1, "fw_customs")
 
-    assert row["description"] == "BOISSON VEGETALE"
-    assert row["origin"] == "IT"
-    assert row["customs_reference"] == "22029915"
+    assert row["unit_price"] == 1.68
+    assert row["line_amount"] == 20.16
+    assert row["remise_detail"] == ""

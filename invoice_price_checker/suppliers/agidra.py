@@ -15,7 +15,7 @@ class AgidraParser(SupplierInvoiceParser):
     supplier_code = "329"
     display_name = "AGIDRA"
 
-    DESCRIPTION_START = 150
+    DESCRIPTION_START = 145
     FC_DESCRIPTION_END = 260
     FW_DESCRIPTION_END = 281
 
@@ -72,7 +72,7 @@ class AgidraParser(SupplierInvoiceParser):
         starts = []
         for index, items in enumerate(lines):
             reference = self._reference_from_items(items)
-            if reference and self._number_in_band(items, 468, 505) is not None:
+            if reference and self._unit_price_from_items(items, layout) is not None:
                 starts.append((index, reference))
 
         rows: list[dict[str, object]] = []
@@ -89,7 +89,7 @@ class AgidraParser(SupplierInvoiceParser):
         useful_words = [
             (x0, y0, x1, y1, text)
             for x0, y0, x1, y1, text, *_ in words
-            if 15 <= x0 <= 565 and 20 <= y0 <= 810
+            if 15 <= x0 <= 565 and 0 <= y0 <= 810
         ]
         useful_words.sort(key=lambda item: (round(item[1], 1), item[0]))
 
@@ -148,12 +148,25 @@ class AgidraParser(SupplierInvoiceParser):
             else self._text_in_band(first_line, 320, 345)
         )
         colis = self._number_in_band(first_line, 20, 44)
-        quantity = self._number_in_band(first_line, 360, 390)
-        gross_price = self._number_in_band(first_line, 392, 425)
-        discount = self._number_in_band(first_line, 426, 462)
-        unit_price = self._number_in_band(first_line, 468, 505)
-        amount = self._number_in_band(first_line, 515, 542)
-        vat_code = self._text_in_band(first_line, 540, 556)
+        if layout == "fw_customs":
+            has_new_columns = self._uses_new_fw_customs_bands(first_line)
+            quantity = self._number_in_band(first_line, 397, 432) or self._number_in_band(first_line, 360, 390)
+            gross_price = self._number_in_band(first_line, 432, 466) or self._number_in_band(first_line, 392, 425)
+            discount = (
+                self._number_in_band(first_line, 468, 505)
+                if has_new_columns
+                else self._number_in_band(first_line, 426, 462)
+            )
+            unit_price = self._unit_price_from_items(first_line, layout)
+            amount = self._number_in_band(first_line, 544, 578) or self._number_in_band(first_line, 515, 542)
+            vat_code = self._text_in_band(first_line, 580, 604) or self._text_in_band(first_line, 540, 556)
+        else:
+            quantity = self._number_in_band(first_line, 360, 390)
+            gross_price = self._number_in_band(first_line, 392, 425)
+            discount = self._number_in_band(first_line, 426, 462)
+            unit_price = self._number_in_band(first_line, 468, 505)
+            amount = self._number_in_band(first_line, 515, 542)
+            vat_code = self._text_in_band(first_line, 540, 556)
 
         if unit_price is None:
             return {}
@@ -184,7 +197,7 @@ class AgidraParser(SupplierInvoiceParser):
         references = [
             item[4].strip()
             for item in items
-            if 108 <= item[0] <= 145 and re.fullmatch(r"\d{5,8}", item[4].strip())
+            if 105 <= item[0] <= 145 and re.fullmatch(r"\d{5,8}", item[4].strip())
         ]
         return references[0] if references else None
 
@@ -231,6 +244,17 @@ class AgidraParser(SupplierInvoiceParser):
             if x_min <= item[0] <= x_max and parse_decimal(item[4]) is not None
         ]
         return values[0] if values else None
+
+    def _unit_price_from_items(self, items: list[tuple], layout: str) -> float | None:
+        if layout == "fw_customs" and self._uses_new_fw_customs_bands(items):
+            return self._number_in_band(items, 509, 542)
+        return self._number_in_band(items, 468, 505)
+
+    def _uses_new_fw_customs_bands(self, items: list[tuple]) -> bool:
+        return (
+            self._number_in_band(items, 509, 542) is not None
+            and self._number_in_band(items, 544, 578) is not None
+        )
 
     def _text_in_band(self, items: list[tuple], x_min: float, x_max: float) -> str | None:
         values = [item[4].strip() for item in items if x_min <= item[0] <= x_max and item[4].strip()]
