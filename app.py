@@ -577,13 +577,15 @@ st.dataframe(metadata_df, use_container_width=True, hide_index=True)
 unmatched = result[~result["Match_Fact_DB"]].copy()
 abnormal = result[result["Ecart_Prix_Anormal"]].copy()
 blocked = result[result["Blocage_Modif"]].copy()
+if "Raison_du_Blocage" in blocked.columns:
+    blocked = blocked[["Raison_du_Blocage", *[column for column in blocked.columns if column != "Raison_du_Blocage"]]]
 workbook_sheets = {
     "price_changes": changed,
-    "odoo_update_review": odoo_update_rows,
     "unmatched": unmatched,
     "abnormal_changes": abnormal,
     "blocked_or_manual_review": blocked,
     "all_checked": result,
+    "odoo_update_review": odoo_update_rows,
 }
 
 if st.button("Prepare complete review workbook"):
@@ -598,14 +600,14 @@ if workbook_data := st.session_state.get(f"review_workbook_{invoice_stem}"):
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-tab_all, tab_changed, tab_update, tab_unmatched, tab_abnormal, tab_blocked = st.tabs(
+tab_all, tab_changed, tab_unmatched, tab_abnormal, tab_blocked, tab_update = st.tabs(
     [
         "All invoice lines",
         "Changed prices",
-        "Odoo update",
         "Unmatched",
         "Abnormal",
         "Blocked / manual review",
+        "Odoo update",
     ]
 )
 
@@ -631,27 +633,6 @@ with tab_changed:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-
-with tab_update:
-    st.subheader("Odoo update review")
-    if odoo_update_rows.empty:
-        st.info("No eligible changed-price rows to update in Odoo.")
-    else:
-        st.warning("Review these rows carefully before updating Odoo. Only eligible changed prices are listed here.")
-        st.dataframe(odoo_update_rows, use_container_width=True, hide_index=True)
-        col_csv, col_xlsx = st.columns(2)
-        col_csv.download_button(
-            "Download Odoo update CSV",
-            data=_download_csv(odoo_update_rows),
-            file_name="odoo_price_update_review.csv",
-            mime="text/csv",
-        )
-        col_xlsx.download_button(
-            "Download Odoo update Excel",
-            data=_download_excel(odoo_update_rows, "odoo_update_review"),
-            file_name="odoo_price_update_review.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
 
 with tab_unmatched:
     if unmatched.empty:
@@ -693,6 +674,27 @@ with tab_blocked:
             data=_download_csv(blocked),
             file_name="blocked_or_manual_review.csv",
             mime="text/csv",
+        )
+
+with tab_update:
+    st.subheader("Odoo update review")
+    if odoo_update_rows.empty:
+        st.info("No eligible changed-price rows to update in Odoo.")
+    else:
+        st.warning("Review these rows carefully before updating Odoo. Only eligible changed prices are listed here.")
+        st.dataframe(odoo_update_rows, use_container_width=True, hide_index=True)
+        col_csv, col_xlsx = st.columns(2)
+        col_csv.download_button(
+            "Download Odoo update CSV",
+            data=_download_csv(odoo_update_rows),
+            file_name="odoo_price_update_review.csv",
+            mime="text/csv",
+        )
+        col_xlsx.download_button(
+            "Download Odoo update Excel",
+            data=_download_excel(odoo_update_rows, "odoo_update_review"),
+            file_name="odoo_price_update_review.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
 if not changed.empty:

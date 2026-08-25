@@ -13,7 +13,7 @@ from invoice_price_checker.text import parse_decimal
 
 class EpiceParser(SupplierInvoiceParser):
     supplier_code = "262"
-    display_name = "EPICE"
+    display_name = "SCOP EPICE"
 
     def parse(self, file: BinaryIO) -> ParsedInvoice:
         import fitz
