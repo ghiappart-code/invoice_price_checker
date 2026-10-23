@@ -48,10 +48,16 @@ class RelaisVertParser(SupplierInvoiceParser):
         )
 
     def _parse_page(self, page: object, page_index: int, fuel_pct: float) -> list[dict[str, object]]:
-        words = [
+        page_words = [
             (x0, y0, x1, y1, text)
             for x0, y0, x1, y1, text, *_ in page.get_text("words")
-            if self.PRODUCT_AREA_Y_MIN <= y0 <= 780
+            if y0 <= 780
+        ]
+        product_area_y_min = self._product_area_start_y(page_words)
+        words = [
+            word
+            for word in page_words
+            if product_area_y_min <= word[1]
         ]
         words.sort(key=lambda item: (item[1], item[0]))
 
@@ -77,6 +83,34 @@ class RelaisVertParser(SupplierInvoiceParser):
             if row:
                 product_rows.append(row)
         return product_rows
+
+    def _product_area_start_y(self, words: list[tuple]) -> float:
+        """Find this page's product area from its table header when available."""
+        header_words: list[tuple] = []
+        for word in words:
+            x0, y0, _x1, y1, text = word
+            label = text.strip().lower().rstrip(".:/")
+            if 38 <= x0 <= 80 and label.startswith("réf"):
+                header_words.append(("reference", y0, y1))
+            elif 38 <= x0 <= 80 and label == "ean":
+                header_words.append(("ean", y0, y1))
+            elif 85 <= x0 <= 255 and label.startswith("désignation"):
+                header_words.append(("designation", y0, y1))
+
+        # The labels may be split or vertically offset slightly in the PDF.
+        # Require all three columns to avoid mistaking page text for a header.
+        for reference in header_words:
+            nearby = [
+                header
+                for header in header_words
+                if abs(header[1] - reference[1]) <= 12
+            ]
+            if {header[0] for header in nearby} >= {"reference", "ean", "designation"}:
+                return max(header[2] for header in nearby) + 1
+
+        # Keep the supplier-specific fallback for pages without a detectable
+        # table header, including the separate Halle Bio parser's override.
+        return self.PRODUCT_AREA_Y_MIN
 
     def _row_from_items(
         self,

@@ -4,6 +4,11 @@ Application Streamlit pour verifier des factures fournisseurs PDF, comparer les 
 
 Ce guide est ecrit pour une personne qui n est pas specialiste en informatique.
 
+Pour l'utilisateur final, l'application s'ouvre ici :
+[https://lmc-rapprochement-factures.streamlit.app/](https://lmc-rapprochement-factures.streamlit.app/)
+
+Documentation imagee pas a pas : [docs/DOCUMENTATION_UTILISATEUR.md](docs/DOCUMENTATION_UTILISATEUR.md)
+
 ## 1. Ce que fait l application
 
 L application permet de :

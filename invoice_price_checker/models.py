@@ -31,5 +31,5 @@ class MatchConfig:
     supplier_code: str
     borne_inf: float = -0.10
     borne_sup: float = 0.05
-    abnormal_ratio: float = 0.30
+    abnormal_ratio: float = 0.50
     allow_description_fallback: bool = True

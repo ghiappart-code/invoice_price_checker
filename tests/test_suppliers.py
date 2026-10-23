@@ -135,6 +135,48 @@ def test_relais_vert_proposes_unit_ratio_override_when_net_price_already_matches
     assert row["supplier_unit_ratio_override_when_abnormal"] == 1.0
 
 
+def test_relais_vert_detects_product_area_below_each_pages_table_header():
+    class Page:
+        def get_text(self, mode):
+            assert mode == "words"
+            return [
+                (40.0, 253.8, 53.6, 261.7, "Réf."),
+                (59.5, 253.8, 73.8, 261.7, "EAN"),
+                (137.3, 253.8, 174.3, 261.7, "Désignation"),
+                (176.2, 253.8, 184.0, 261.7, "du"),
+                (185.9, 253.8, 207.3, 261.7, "produit"),
+                (46.6, 269.3, 68.8, 278.2, "43774"),
+                (89.3, 269.7, 107.6, 277.5, "SOJA"),
+                (109.5, 269.7, 137.9, 277.5, "CUISINE"),
+                (139.8, 269.7, 154.2, 277.5, "UHT"),
+                (156.1, 269.7, 186.1, 277.5, "(3X20CL)"),
+                (188.0, 269.7, 216.0, 277.5, "SOJADE"),
+                (370.1, 269.3, 374.6, 278.2, "8"),
+                (492.5, 269.3, 508.1, 278.2, "2,68"),
+                (521.8, 269.3, 541.8, 278.2, "21,44"),
+            ]
+
+    rows = RelaisVertParser()._parse_page(Page(), 2, 0.0)
+
+    assert len(rows) == 1
+    assert rows[0]["supplier_article_code"] == "43774"
+    assert rows[0]["description"] == "SOJA CUISINE UHT (3X20CL) SOJADE"
+
+
+def test_relais_vert_excludes_index_gazole_from_product_lines():
+    row = RelaisVertParser()._row_from_items(
+        "51200",
+        [
+            (89.3, 288.9, 110.3, 296.7, "INDEX"),
+            (111.9, 288.9, 139.6, 296.7, "GAZOLE"),
+        ],
+        1,
+        0.7,
+    )
+
+    assert row == {}
+
+
 def test_halle_bio_occitanie_reads_product_line_above_relais_vert_default_area():
     class Page:
         def get_text(self, mode):

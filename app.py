@@ -381,7 +381,7 @@ with st.sidebar:
     database_source = st.radio(
         "Action sur la base articles",
         database_sources,
-        index=0,
+        index=database_sources.index(odoo_source),
     )
 
     database_file = None
@@ -467,7 +467,7 @@ with st.sidebar:
     abnormal_ratio = st.number_input(
         "Ratio Écart/Prix actuel anormal",
         min_value=0.0,
-        value=0.30,
+        value=0.50,
         step=0.05,
         format="%.2f",
         help="Les lignes au-dessus de ce ratio absolu sont isolées pour revue manuelle.",
@@ -525,7 +525,7 @@ if not st.session_state.get("analysis_started", False):
 _validate_invoice_supplier(invoice_file, supplier_id)
 
 try:
-    if database_source == "Base locale actuelle" and status["exists"]:
+    if database_source == local_source and status["exists"]:
         with data_path.open("rb") as handle:
             products = load_product_database(handle)
     elif database_source == "Chargement manuel" and database_file:
@@ -570,7 +570,10 @@ summary_cols[6].metric("Blocked", int(result["Blocage_Modif"].sum()))
 
 st.subheader("Invoice Metadata")
 metadata_df = pd.DataFrame(
-    [{"field": key, "value": value} for key, value in invoice.metadata.items()]
+    [
+        {"field": key, "value": "" if value is None else str(value)}
+        for key, value in invoice.metadata.items()
+    ]
 )
 st.dataframe(metadata_df, use_container_width=True, hide_index=True)
 
