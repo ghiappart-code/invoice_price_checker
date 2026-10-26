@@ -496,6 +496,7 @@ with st.sidebar:
         st.session_state["analysis_signature"] = current_analysis_signature
         st.session_state.pop("odoo_update_summary", None)
         st.session_state.pop("odoo_preflight_summary", None)
+        st.session_state.pop("agidra_validation_ack_signature", None)
 
     launch_analysis = st.button(
         "Lancer l'analyse",
@@ -547,6 +548,103 @@ except Exception as exc:
     st.error(f"Could not parse invoice with parser '{supplier_id}': {exc}")
     st.stop()
 
+validation_warnings = invoice.metadata.get("validation_warnings", [])
+validation_fields = {
+    "line_count",
+    "expected_line_count",
+    "line_count_verified",
+    "expected_line_total",
+    "expected_line_total_label",
+    "extracted_line_total",
+    "line_total_difference",
+    "line_total_verified",
+    "line_validation_errors",
+    "lines_validated",
+    "validation_warnings",
+}
+if parser.supplier_code == "329":
+    count_verified = invoice.metadata.get("line_count_verified")
+    total_verified = invoice.metadata.get("line_total_verified")
+    line_errors = invoice.metadata.get("line_validation_errors", [])
+
+    def format_euro(value):
+        whole, decimals = f"{value:,.2f}".split(".")
+        return f"{whole.replace(',', ' ')},{decimals} €"
+
+    validation_rows = [
+        {"Contrôle": "Nombre d'articles comptés", "Valeur": str(invoice.metadata.get("line_count", 0))},
+        {
+            "Contrôle": "Nombre d'articles déclarés",
+            "Valeur": str(invoice.metadata.get("expected_line_count"))
+            if invoice.metadata.get("expected_line_count") is not None else "Non indiqué",
+        },
+        {
+            "Contrôle": "Vérification du nombre d'articles",
+            "Valeur": "OK" if count_verified is True else "NOK" if count_verified is False else "Non vérifiable",
+        },
+        {
+            "Contrôle": "Total HT calculé",
+            "Valeur": format_euro(invoice.metadata["extracted_line_total"])
+            if invoice.metadata.get("extracted_line_total") is not None else "Non calculable",
+        },
+        {
+            "Contrôle": "Total HT déclaré",
+            "Valeur": format_euro(invoice.metadata["expected_line_total"])
+            if invoice.metadata.get("expected_line_total") is not None else "Non indiqué",
+        },
+        {
+            "Contrôle": "Vérification du total HT",
+            "Valeur": "OK" if total_verified is True else "NOK" if total_verified is False else "Non vérifiable",
+        },
+        {
+            "Contrôle": "Contrôle quantité × prix par article",
+            "Valeur": "NOK" if line_errors else "OK",
+        },
+    ]
+    validation_df = pd.DataFrame(validation_rows)
+    highlighted_controls = set()
+    if count_verified is False:
+        highlighted_controls.update({
+            "Nombre d'articles comptés",
+            "Nombre d'articles déclarés",
+            "Vérification du nombre d'articles",
+        })
+    if total_verified is False:
+        highlighted_controls.update({
+            "Total HT calculé",
+            "Total HT déclaré",
+            "Vérification du total HT",
+        })
+    if line_errors:
+        highlighted_controls.add("Contrôle quantité × prix par article")
+
+    def style_validation_row(row):
+        style = "color: #b91c1c; font-weight: bold;" if row["Contrôle"] in highlighted_controls else ""
+        return [style] * len(row)
+
+    st.subheader("Contrôle de la facture Agidra")
+    st.dataframe(
+        validation_df.style.apply(style_validation_row, axis=1),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+if validation_warnings and st.session_state.get("agidra_validation_ack_signature") != current_analysis_signature:
+    if parser.supplier_code == "329" and invoice.metadata.get("line_validation_errors"):
+        st.error(
+            "Contrôle quantité × prix par article en échec pour les références : "
+            + ", ".join(invoice.metadata["line_validation_errors"])
+        )
+    elif parser.supplier_code != "329":
+        st.warning("Les contrôles de cohérence ont détecté un ou plusieurs écarts :")
+        for warning in validation_warnings:
+            st.markdown(f"- {warning}")
+    st.warning("**L'analyse est suspendue.** Vérifiez la facture, puis confirmez pour poursuivre malgré ces écarts.")
+    if st.button("Continuer l'analyse malgré les écarts", key="continue_agidra_validation"):
+        st.session_state["agidra_validation_ack_signature"] = current_analysis_signature
+    else:
+        st.stop()
+
 config = MatchConfig(
     supplier_code=parser.supplier_code,
     borne_inf=borne_inf,
@@ -573,6 +671,7 @@ metadata_df = pd.DataFrame(
     [
         {"field": key, "value": "" if value is None else str(value)}
         for key, value in invoice.metadata.items()
+        if parser.supplier_code != "329" or key not in validation_fields
     ]
 )
 st.dataframe(metadata_df, use_container_width=True, hide_index=True)

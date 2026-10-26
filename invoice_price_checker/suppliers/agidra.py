@@ -41,24 +41,51 @@ class AgidraParser(SupplierInvoiceParser):
 
         lines = pd.DataFrame(records)
         expected_line_count = self._find_expected_line_count(full_text)
+        expected_total, expected_total_label = self._find_expected_total(full_text)
+        extracted_total = self._sum_line_amounts(lines)
+        total_difference = (
+            round(extracted_total - expected_total, 2)
+            if extracted_total is not None and expected_total is not None
+            else None
+        )
+        validation_errors = self._validate_lines(lines)
+        validation_warnings: list[str] = []
+
         metadata["line_count"] = len(lines)
         metadata["expected_line_count"] = expected_line_count
         metadata["line_count_verified"] = (
             len(lines) == expected_line_count if expected_line_count is not None else None
         )
-        if expected_line_count is not None and len(lines) != expected_line_count:
-            raise ValueError(
-                "Contrôle AGIDRA impossible : "
-                f"{expected_line_count} lignes annoncées, {len(lines)} lignes extraites."
-            )
-        validation_errors = self._validate_lines(lines)
+        metadata["expected_line_total"] = expected_total
+        metadata["extracted_line_total"] = extracted_total
+        metadata["line_total_difference"] = total_difference
+        metadata["line_total_verified"] = (
+            abs(total_difference) < 0.03 if total_difference is not None else None
+        )
         metadata["line_validation_errors"] = validation_errors
         metadata["lines_validated"] = not validation_errors
+
+        if expected_line_count is not None and len(lines) != expected_line_count:
+            validation_warnings.append(
+                f"Le PDF annonce {expected_line_count} lignes, mais {len(lines)} ont été extraites."
+            )
+        if expected_total is not None:
+            if extracted_total is None:
+                validation_warnings.append(
+                    "Le total des montants des lignes n'a pas pu être calculé."
+                )
+            elif total_difference is not None and abs(total_difference) >= 0.03:
+                validation_warnings.append(
+                    f"La somme des montants extraits ({extracted_total:.2f} €) ne correspond "
+                    f"pas au {expected_total_label} imprimé ({expected_total:.2f} €). "
+                    f"Écart : {total_difference:+.2f} €."
+                )
         if validation_errors:
-            raise ValueError(
-                "Contrôle AGIDRA impossible pour les références : "
+            validation_warnings.append(
+                "Le contrôle quantité × prix a échoué pour les références : "
                 + ", ".join(validation_errors)
             )
+        metadata["validation_warnings"] = validation_warnings
         return ParsedInvoice(
             supplier_code=self.supplier_code,
             invoice_number=metadata["invoice_number"],
@@ -267,6 +294,31 @@ class AgidraParser(SupplierInvoiceParser):
 
     def _description_end(self, layout: str) -> float:
         return self.FW_DESCRIPTION_END if layout == "fw_customs" else self.FC_DESCRIPTION_END
+
+    def _find_expected_total(self, text: str) -> tuple[float | None, str | None]:
+        amount_pattern = r"([0-9][0-9\s\u00a0\u202f.,]*[,\.][0-9]{2})"
+        # AGIDRA's standalone TOTAL is the sum before a possible global rebate.
+        # Prefer it to TOTAL HT, which can already include that rebate.
+        for label, pattern in (
+            ("TOTAL", rf"(?im)^\s*TOTAL\s*\r?\n\s*{amount_pattern}\s*$"),
+            ("TOTAL HT", rf"(?im)^\s*TOTAL\s+HT\s*\r?\n\s*{amount_pattern}\s*$"),
+        ):
+            matches = re.findall(pattern, text)
+            if matches:
+                total = parse_decimal(matches[-1])
+                if total is not None:
+                    return total, label
+        return None, None
+
+    def _sum_line_amounts(self, lines: pd.DataFrame) -> float | None:
+        if lines.empty:
+            return 0.0
+        if "line_amount" not in lines:
+            return None
+        amounts = pd.to_numeric(lines["line_amount"], errors="coerce")
+        if amounts.isna().any():
+            return None
+        return round(float(amounts.sum()), 2)
 
     def _find_expected_line_count(self, text: str) -> int | None:
         matches = re.findall(r"Nb\s+Lignes\s*:\s*(\d+)", text, re.IGNORECASE)

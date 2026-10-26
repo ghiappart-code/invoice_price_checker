@@ -253,6 +253,19 @@ def test_agidra_reads_expected_line_count():
     assert parser._find_expected_line_count("aucun total") is None
 
 
+def test_agidra_prefers_total_before_global_rebate():
+    parser = AgidraParser()
+    text = "TOTAL\n1 231,99\nRemise\n-123,20\nTOTAL HT\n1 108,79"
+
+    assert parser._find_expected_total(text) == (1231.99, "TOTAL")
+
+
+def test_agidra_falls_back_to_total_ht_when_standalone_total_is_absent():
+    parser = AgidraParser()
+
+    assert parser._find_expected_total("TOTAL HT\n949,88") == (949.88, "TOTAL HT")
+
+
 def test_agidra_stops_product_at_large_vertical_gap():
     parser = AgidraParser()
     lines = [
