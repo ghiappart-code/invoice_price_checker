@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import datetime
 from typing import BinaryIO
 
@@ -37,7 +38,9 @@ class AgidraParser(SupplierInvoiceParser):
             layout = self._detect_layout(full_text)
             metadata["layout"] = layout
             for page_index, page in enumerate(doc, start=1):
-                records.extend(self._parse_page(page, page_index, layout))
+                page_words = page.get_text("words")
+                columns = self._columns_from_header(page_words)
+                records.extend(self._parse_page(page, page_index, layout, columns))
 
         lines = pd.DataFrame(records)
         expected_line_count = self._find_expected_line_count(full_text)
@@ -94,12 +97,23 @@ class AgidraParser(SupplierInvoiceParser):
             metadata=metadata,
         )
 
-    def _parse_page(self, page: object, page_index: int, layout: str) -> list[dict[str, object]]:
+    def _parse_page(
+        self,
+        page: object,
+        page_index: int,
+        layout: str,
+        columns: dict[str, float] | None = None,
+    ) -> list[dict[str, object]]:
         lines = self._group_words_by_line(page.get_text("words"))
         starts = []
         for index, items in enumerate(lines):
             reference = self._reference_from_items(items)
-            if reference and self._unit_price_from_items(items, layout) is not None:
+            unit_price = (
+                self._number_near_column(items, columns, "unit_price")
+                if columns
+                else self._unit_price_from_items(items, layout)
+            )
+            if reference and unit_price is not None:
                 starts.append((index, reference))
 
         rows: list[dict[str, object]] = []
@@ -107,7 +121,7 @@ class AgidraParser(SupplierInvoiceParser):
             next_line_index = starts[position + 1][0] if position + 1 < len(starts) else len(lines)
             block_lines = lines[line_index:next_line_index]
             block = self._product_words(block_lines, layout)
-            row = self._row_from_block(reference, block, page_index, layout)
+            row = self._row_from_block(reference, block, page_index, layout, columns)
             if row:
                 rows.append(row)
         return rows
@@ -116,7 +130,7 @@ class AgidraParser(SupplierInvoiceParser):
         useful_words = [
             (x0, y0, x1, y1, text)
             for x0, y0, x1, y1, text, *_ in words
-            if 15 <= x0 <= 565 and 0 <= y0 <= 810
+            if 15 <= x0 <= 620 and 0 <= y0 <= 810
         ]
         useful_words.sort(key=lambda item: (round(item[1], 1), item[0]))
 
@@ -151,6 +165,7 @@ class AgidraParser(SupplierInvoiceParser):
         block: list[tuple],
         page_index: int,
         layout: str,
+        columns: dict[str, float] | None = None,
     ) -> dict[str, object]:
         start_y = min(item[1] for item in block if item[4].strip() == reference)
         first_line = [item for item in block if abs(item[1] - start_y) <= 4]
@@ -175,7 +190,14 @@ class AgidraParser(SupplierInvoiceParser):
             else self._text_in_band(first_line, 320, 345)
         )
         colis = self._number_in_band(first_line, 20, 44)
-        if layout == "fw_customs":
+        if columns:
+            quantity = self._number_near_column(first_line, columns, "quantity")
+            gross_price = self._number_near_column(first_line, columns, "gross_price")
+            discount = self._number_near_column(first_line, columns, "discount")
+            unit_price = self._number_near_column(first_line, columns, "unit_price")
+            amount = self._number_near_column(first_line, columns, "amount")
+            vat_code = self._text_near_column(first_line, columns, "vat")
+        elif layout == "fw_customs":
             has_new_columns = self._uses_new_fw_customs_bands(first_line)
             quantity = self._number_in_band(first_line, 397, 432) or self._number_in_band(first_line, 360, 390)
             gross_price = self._number_in_band(first_line, 432, 466) or self._number_in_band(first_line, 392, 425)
@@ -272,6 +294,119 @@ class AgidraParser(SupplierInvoiceParser):
         ]
         return values[0] if values else None
 
+    def _columns_from_header(self, words: list[tuple]) -> dict[str, float] | None:
+        """Read numeric column positions from this page's printed table header."""
+        useful = [
+            (float(w[0]), float(w[1]), float(w[2]), float(w[3]), str(w[4]).strip())
+            for w in words
+            if 15 <= w[0] <= 620 and 0 <= w[1] <= 810 and str(w[4]).strip()
+        ]
+        lines: list[list[tuple]] = []
+        for word in sorted(useful, key=lambda item: (round(item[1], 1), item[0])):
+            if not lines or abs(lines[-1][0][1] - word[1]) > 4:
+                lines.append([word])
+            else:
+                lines[-1].append(word)
+
+        for header in lines:
+            normalized = [(word, self._normalize_header_word(word[4])) for word in header]
+            labels = {text for _word, text in normalized}
+            if not any(text.startswith("reference") for text in labels):
+                continue
+            if not any(text.startswith("designation") for text in labels):
+                continue
+            if not any(text.startswith("quantite") for text in labels):
+                continue
+
+            columns: dict[str, float] = {}
+
+            def center(word: tuple) -> float:
+                return (word[0] + word[2]) / 2
+
+            for word, label in normalized:
+                if label.startswith("quantite"):
+                    columns["quantity"] = center(word)
+                elif label in {"total", "totalht"}:
+                    columns["amount"] = center(word)
+                elif label in {"tva", "vat"}:
+                    columns["vat"] = center(word)
+                elif label.startswith("remise"):
+                    columns["discount"] = center(word)
+
+            unit_headers = [word for word, label in normalized if label in {"pu", "puht"}]
+            qualifiers = [
+                (word, label)
+                for word, label in normalized
+                if label in {"net", "ht"}
+            ]
+            for unit_header in unit_headers:
+                nearest_qualifier = min(
+                    qualifiers,
+                    key=lambda item: abs(center(item[0]) - center(unit_header)),
+                    default=None,
+                )
+                qualifier = (
+                    nearest_qualifier[1]
+                    if nearest_qualifier is not None
+                    and abs(center(nearest_qualifier[0]) - center(unit_header)) <= 36
+                    else ""
+                )
+                if qualifier == "net":
+                    columns["unit_price"] = center(unit_header)
+                elif qualifier == "ht":
+                    columns["gross_price"] = center(unit_header)
+
+            # Older AGIDRA headers may print a single P.U label beside the net
+            # price, without repeating “Net”. Use it only when the table has a
+            # clear total column and no separate gross/net labels were found.
+            if "unit_price" not in columns and len(unit_headers) == 1 and "amount" in columns:
+                columns["unit_price"] = center(unit_headers[0])
+
+            if {"quantity", "unit_price", "amount"}.issubset(columns):
+                return columns
+        return None
+
+    def _normalize_header_word(self, value: str) -> str:
+        normalized = unicodedata.normalize("NFKD", value.casefold())
+        normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+        return re.sub(r"[^a-z]", "", normalized)
+
+    def _number_near_column(
+        self,
+        items: list[tuple],
+        columns: dict[str, float],
+        column: str,
+    ) -> float | None:
+        target = columns.get(column)
+        if target is None:
+            return None
+        values = [
+            (abs((item[0] + item[2]) / 2 - target), parse_decimal(item[4]))
+            for item in items
+            if parse_decimal(item[4]) is not None
+        ]
+        if not values:
+            return None
+        distance, value = min(values, key=lambda item: item[0])
+        return value if distance <= 26 else None
+
+    def _text_near_column(
+        self,
+        items: list[tuple],
+        columns: dict[str, float],
+        column: str,
+    ) -> str | None:
+        target = columns.get(column)
+        if target is None:
+            return None
+        candidates = [
+            item for item in items
+            if abs((item[0] + item[2]) / 2 - target) <= 26 and item[4].strip()
+        ]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda item: abs((item[0] + item[2]) / 2 - target))[4].strip()
+
     def _unit_price_from_items(self, items: list[tuple], layout: str) -> float | None:
         if layout == "fw_customs" and self._uses_new_fw_customs_bands(items):
             return self._number_in_band(items, 509, 542)
@@ -296,12 +431,16 @@ class AgidraParser(SupplierInvoiceParser):
         return self.FW_DESCRIPTION_END if layout == "fw_customs" else self.FC_DESCRIPTION_END
 
     def _find_expected_total(self, text: str) -> tuple[float | None, str | None]:
-        amount_pattern = r"([0-9][0-9\s\u00a0\u202f.,]*[,\.][0-9]{2})"
+        amount_pattern = r"([0-9][0-9 \t\u00a0\u202f.,]*[,\.][0-9]{2})"
         # AGIDRA's standalone TOTAL is the sum before a possible global rebate.
         # Prefer it to TOTAL HT, which can already include that rebate.
         for label, pattern in (
-            ("TOTAL", rf"(?im)^\s*TOTAL\s*\r?\n\s*{amount_pattern}\s*$"),
-            ("TOTAL HT", rf"(?im)^\s*TOTAL\s+HT\s*\r?\n\s*{amount_pattern}\s*$"),
+            ("TOTAL", rf"(?im)^[ \t]*TOTAL[ \t]*\r?\n[ \t]*{amount_pattern}[ \t]*$"),
+            (
+                "TOTAL H.T.",
+                rf"(?im)^[ \t]*TOTAL[ \t]+H[ \t]*\.[ \t]*T[ \t]*\.[ \t]*\r?\n[ \t]*{amount_pattern}[ \t]*$",
+            ),
+            ("TOTAL HT", rf"(?im)^[ \t]*TOTAL[ \t]+HT[ \t]*\r?\n[ \t]*{amount_pattern}[ \t]*$"),
         ):
             matches = re.findall(pattern, text)
             if matches:

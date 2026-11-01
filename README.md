@@ -164,7 +164,40 @@ Streamlit ouvre normalement une page dans le navigateur. Si la page ne s ouvre p
 http://localhost:8501
 ```
 
-## 7. Utilisation normale
+## 7. Mode développeur (installation locale)
+
+Le mode développeur ajoute des outils de diagnostic dans l application locale. Il est activé avec la variable `INVOICE_PRICE_CHECKER_DEV_TOOLS`. Il permet notamment de vérifier une mise à jour Odoo sans écrire, de télécharger le rapport de vérification, et d enregistrer ou télécharger une base d articles chargée depuis Odoo.
+
+Sur Mac, depuis la racine du projet, activez l environnement virtuel puis lancez Streamlit ainsi :
+
+```bash
+cd /Users/grahal/Documents/Codex/invoice_price_checker
+source .venv/bin/activate
+INVOICE_PRICE_CHECKER_DEV_TOOLS=1 streamlit run app.py
+```
+
+Pour désactiver les outils développeur, arrêtez Streamlit avec `Ctrl+C`, puis relancez simplement `streamlit run app.py` sans la variable. La variable ne s applique qu au terminal où elle est définie.
+
+Il est aussi possible d activer l option dans `.streamlit/secrets.toml` :
+
+```toml
+[app]
+developer_tools = true
+```
+
+Cette option peut être ajoutée au même fichier que la section `[odoo]`. Gardez les identifiants Odoo dans ce fichier local ignoré par Git. Le bouton de vérification à blanc (`Verify Odoo update without writing`) lit les données Odoo mais ne les modifie pas. Le bouton `Update Odoo prices` effectue une vraie mise à jour après confirmation explicite dans l application.
+
+### Diagnostic du rafraîchissement Odoo
+
+Pour obtenir des journaux détaillés pendant le téléchargement de la base articles, depuis la racine du projet et avec l environnement virtuel actif, exécutez :
+
+```bash
+python scripts/refresh_odoo_database_debug.py
+```
+
+Ce script lit `.streamlit/secrets.toml`, se connecte à Odoo et écrit la base dans `data_files/var_articles.data`. Il remplace donc le fichier local existant s il y en a un.
+
+## 8. Utilisation normale
 
 Dans l application :
 
@@ -178,7 +211,7 @@ Dans l application :
 
 La mise a jour Odoo ne doit etre lancee qu apres verification du fichier de controle.
 
-## 8. Base articles
+## 9. Base articles
 
 Par defaut, l application cherche la base ici :
 
@@ -190,7 +223,7 @@ Si ce fichier existe, l application peut l utiliser directement.
 
 Si les identifiants Odoo sont configures, le bouton de rafraichissement permet de recreer cette base depuis Odoo.
 
-## 9. Fichier Excel produit
+## 10. Fichier Excel produit
 
 Le classeur Excel contient plusieurs onglets, notamment :
 
@@ -208,7 +241,7 @@ Le nom du fichier Excel est base sur le nom de la facture, par exemple :
 FC12402686_price_review.xlsx
 ```
 
-## 10. Regles RELAIS VERT / HALLE BIO OCCITANIE actuellement implementees
+## 11. Regles RELAIS VERT / HALLE BIO OCCITANIE actuellement implementees
 
 Pour RELAIS VERT et HALLE BIO OCCITANIE :
 
@@ -229,7 +262,7 @@ Pour RELAIS VERT et HALLE BIO OCCITANIE :
 - la colonne `G` n est pas utilisee pour bloquer les baisses ;
 - `prix_de_vente` est recalcule a partir du nouveau cout, de la TVA et du taux de marque.
 
-## 11. Dependances Python
+## 12. Dependances Python
 
 Les dependances sont dans `requirements.txt` :
 
@@ -248,7 +281,7 @@ Elles s installent avec :
 pip install -r requirements.txt
 ```
 
-## 12. En cas de probleme
+## 13. En cas de probleme
 
 Si la commande `streamlit run app.py` ne marche pas :
 
@@ -268,7 +301,7 @@ Si l application ne peut pas se connecter a Odoo :
 2. Verifier l adresse du serveur, le nom de la base, l utilisateur et le mot de passe.
 3. Verifier que l utilisateur a les droits suffisants dans Odoo.
 
-## 13. Ajouter un nouveau fournisseur
+## 14. Ajouter un nouveau fournisseur
 
 La partie commune du programme reste la meme :
 
@@ -297,7 +330,7 @@ Un modele de depart existe ici :
 invoice_price_checker/suppliers/template.py
 ```
 
-## 14. Fichiers a ne pas partager
+## 15. Fichiers a ne pas partager
 
 Ne pas partager :
 
